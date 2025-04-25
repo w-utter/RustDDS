@@ -5,6 +5,7 @@ use std::{
   time::{Duration, Instant},
 };
 
+use chrono::Utc;
 use log::{debug, error, info, trace, warn};
 use mio_06::{Event, Events, Poll, PollOpt, Ready, Token};
 use mio_extras::channel as mio_channel;
@@ -36,6 +37,7 @@ use crate::{
     entity::RTPSEntity,
     guid::{EntityId, GuidPrefix, TokenDecode, GUID},
   },
+  EndpointDescription,
 };
 #[cfg(feature = "security")]
 use crate::{
@@ -694,6 +696,19 @@ impl DPEventLoop {
   }
 
   fn remote_reader_discovered(&mut self, remote_reader: &DiscoveredReaderData) {
+    self
+      .participant_status_sender
+      .try_send(DomainParticipantStatusEvent::ReaderDetected {
+        reader: EndpointDescription {
+          updated_time: Utc::now(),
+          guid: remote_reader.reader_proxy.remote_reader_guid,
+          topic_name: remote_reader.subscription_topic_data.topic_name.clone(),
+          type_name: remote_reader.subscription_topic_data.type_name().clone(),
+          qos: remote_reader.subscription_topic_data.qos(),
+        },
+      })
+      .unwrap_or_else(|e| error!("Cannot report participant status: {e:?}"));
+
     for writer in self.writers.values_mut() {
       if remote_reader.subscription_topic_data.topic_name() == writer.topic_name() {
         #[cfg(not(feature = "security"))]
@@ -769,6 +784,19 @@ impl DPEventLoop {
   }
 
   fn remote_writer_discovered(&mut self, remote_writer: &DiscoveredWriterData) {
+    self
+      .participant_status_sender
+      .try_send(DomainParticipantStatusEvent::WriterDetected {
+        writer: EndpointDescription {
+          updated_time: Utc::now(),
+          guid: remote_writer.writer_proxy.remote_writer_guid,
+          topic_name: remote_writer.publication_topic_data.topic_name.clone(),
+          type_name: remote_writer.publication_topic_data.type_name.clone(),
+          qos: remote_writer.publication_topic_data.qos(),
+        },
+      })
+      .unwrap_or_else(|e| error!("Cannot report participant status: {e:?}"));
+
     // update writer proxies in local readers
     for reader in self.message_receiver.available_readers.values_mut() {
       if &remote_writer.publication_topic_data.topic_name == reader.topic_name() {
