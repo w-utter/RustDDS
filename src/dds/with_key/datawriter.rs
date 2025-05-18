@@ -162,13 +162,18 @@ pub struct DataWriter<D: Keyed, SA: SerializerAdapter<D> = CDRSerializerAdapter<
   my_topic: Topic,
   qos_policy: QosPolicies,
   my_guid: GUID,
+  #[cfg(not(feature = "io-uring"))]
   cc_upload: mio_channel::SyncSender<WriterCommand>,
+  #[cfg(not(feature = "io-uring"))]
   cc_upload_waker: Arc<Mutex<Option<Waker>>>,
+  #[cfg(not(feature = "io-uring"))]
   discovery_command: mio_channel::SyncSender<DiscoveryCommand>,
+  #[cfg(not(feature = "io-uring"))]
   status_receiver: StatusChannelReceiver<DataWriterStatus>,
   available_sequence_number: AtomicI64,
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, SA> Drop for DataWriter<D, SA>
 where
   D: Keyed,
@@ -204,6 +209,7 @@ where
   SA: SerializerAdapter<D>,
 {
   #[allow(clippy::too_many_arguments)]
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) fn new(
     publisher: Publisher,
     topic: Topic,
@@ -235,6 +241,31 @@ where
       cc_upload_waker,
       discovery_command,
       status_receiver,
+      available_sequence_number: AtomicI64::new(1), // valid numbering starts from 1
+    })
+  }
+
+  #[cfg(feature = "io-uring")]
+  pub(crate) fn new(
+    publisher: Publisher,
+    topic: Topic,
+    qos: QosPolicies,
+    guid: GUID,
+  ) -> CreateResult<Self> {
+    if let Some(lv) = qos.liveliness {
+      match lv {
+        Liveliness::Automatic { .. } | Liveliness::ManualByTopic { .. } => (),
+        //TODO: need to configure smth with the discovery
+        Liveliness::ManualByParticipant { .. } => (),
+      }
+    };
+    Ok(Self {
+      data_phantom: PhantomData,
+      ser_phantom: PhantomData,
+      my_publisher: publisher,
+      my_topic: topic,
+      qos_policy: qos,
+      my_guid: guid,
       available_sequence_number: AtomicI64::new(1), // valid numbering starts from 1
     })
   }
@@ -284,6 +315,7 @@ where
   ///
   /// data_writer.refresh_manual_liveliness();
   /// ```
+  #[cfg(not(feature = "io-uring"))]
   pub fn refresh_manual_liveliness(&self) {
     if let Some(lv) = self.qos().liveliness {
       match lv {
@@ -331,11 +363,17 @@ where
   /// let some_data = SomeType { a: 1 };
   /// data_writer.write(some_data, None).unwrap();
   /// ```
+  #[cfg(not(feature = "io-uring"))]
   pub fn write(&self, data: D, source_timestamp: Option<Timestamp>) -> WriteResult<(), D> {
     self.write_with_options(data, WriteOptions::from(source_timestamp))?;
     Ok(())
   }
+  #[cfg(feature = "io-uring")]
+  pub fn write(&self, data: D, source_timestamp: Option<Timestamp>) -> WriteResult<WriterCommand, D> {
+    self.write_with_options(data, WriteOptions::from(source_timestamp))
+  }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn write_with_options(
     &self,
     data: D,
@@ -396,6 +434,73 @@ where
     }
   }
 
+  #[cfg(feature = "io-uring")]
+  pub fn write_with_options(
+    &self,
+    data: D,
+    write_options: WriteOptions,
+  ) -> WriteResult<WriterCommand, D> {
+    // serialize
+    let send_buffer = match SA::to_bytes(&data) {
+      Ok(b) => b,
+      Err(e) => {
+        return Err(WriteError::Serialization {
+          reason: format!("{e}"),
+          data,
+        })
+      }
+    };
+
+    let ddsdata = DDSData::new(SerializedPayload::new_from_bytes(
+      SA::output_encoding(),
+      send_buffer,
+    ));
+    let sequence_number = self.next_sequence_number();
+    let writer_command = WriterCommand::DDSData {
+      ddsdata,
+      write_options,
+      sequence_number,
+    };
+
+    Ok(writer_command)
+
+    /*
+    match try_send_timeout(&self.cc_upload, writer_command, timeout) {
+      Ok(_) => {
+        self.refresh_manual_liveliness();
+        Ok(SampleIdentity {
+          writer_guid: self.my_guid,
+          sequence_number,
+        })
+      }
+      Err(TrySendError::Full(_writer_command)) => {
+        warn!(
+          "Write timed out: topic={:?}  timeout={:?}",
+          self.my_topic.name(),
+          timeout,
+        );
+        self.undo_sequence_number();
+        Err(WriteError::WouldBlock { data })
+      }
+      Err(TrySendError::Disconnected(_)) => {
+        self.undo_sequence_number();
+        Err(WriteError::Poisoned {
+          reason: "Cannot send to Writer".to_string(),
+          data,
+        })
+      }
+      Err(TrySendError::Io(e)) => {
+        self.undo_sequence_number();
+        Err(e.into())
+      }
+    }
+    Ok(SampleIdentity {
+      writer_guid: self.my_guid,
+      sequence_number: 0.into(),
+    })
+    */
+  }
+
   /// This operation blocks the calling thread until either all data written by
   /// the reliable DataWriter entities is acknowledged by all
   /// matched reliable DataReader entities, or else the duration specified by
@@ -439,6 +544,7 @@ where
   /// data_writer.write(some_data, None).unwrap();
   /// data_writer.wait_for_acknowledgments(std::time::Duration::from_millis(100));
   /// ```
+  #[cfg(not(feature = "io-uring"))]
   pub fn wait_for_acknowledgments(&self, max_wait: Duration) -> WriteResult<bool, ()> {
     match &self.qos_policy.reliability {
       None | Some(Reliability::BestEffort) => Ok(true),
@@ -754,6 +860,7 @@ where
   ///
   /// An `Err` result means that livelines assertion message could not be sent,
   /// likely because Discovery has too much work to do.
+  #[cfg(not(feature = "io-uring"))]
   pub fn assert_liveliness(&self) -> WriteResult<(), ()> {
     self.refresh_manual_liveliness();
 
@@ -860,6 +967,7 @@ where
   /// // disposes both some_data_1_1 and some_data_1_2. They are no longer offered by this writer to this topic.
   /// data_writer.dispose(&1, None).unwrap();
   /// ```
+  #[cfg(not(feature = "io-uring"))]
   pub fn dispose(
     &self,
     key: &<D as Keyed>::K,
@@ -894,6 +1002,7 @@ where
   }
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<'a, D, SA> StatusEvented<'a, DataWriterStatus, StatusReceiverStream<'a, DataWriterStatus>>
   for DataWriter<D, SA>
 where
@@ -943,6 +1052,7 @@ where
 
 // A future for an asynchronous write operation
 #[must_use = "futures do nothing unless you `.await` or poll them"]
+#[cfg(not(feature = "io-uring"))]
 pub struct AsyncWrite<'a, D, SA>
 where
   D: Keyed,
@@ -958,6 +1068,7 @@ where
 
 // This is required, because AsyncWrite contains "D".
 // TODO: Is it ok to promise Unpin here?
+#[cfg(not(feature = "io-uring"))]
 impl<D, SA> Unpin for AsyncWrite<'_, D, SA>
 where
   D: Keyed,
@@ -965,6 +1076,7 @@ where
 {
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, SA> Future for AsyncWrite<'_, D, SA>
 where
   D: Keyed,
@@ -1028,6 +1140,7 @@ where
 // Handles both the sending of the WaitForAcknowledgments command and
 // the waiting for the acknowledgements.
 #[must_use = "futures do nothing unless you `.await` or poll them"]
+#[cfg(not(feature = "io-uring"))]
 pub enum AsyncWaitForAcknowledgments<'a, D, SA>
 where
   D: Keyed,
@@ -1045,6 +1158,7 @@ where
   Fail(WriteError<()>),
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, SA> Future for AsyncWaitForAcknowledgments<'_, D, SA>
 where
   D: Keyed,
@@ -1134,6 +1248,7 @@ where
   D: Keyed,
   SA: SerializerAdapter<D>,
 {
+  #[cfg(not(feature = "io-uring"))]
   pub async fn async_write(
     &self,
     data: D,
@@ -1148,6 +1263,7 @@ where
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub async fn async_write_with_options(
     &self,
     data: D,
@@ -1194,6 +1310,7 @@ where
 
   /// Like the synchronous version.
   /// But there is no timeout. Use asyncs to bring your own timeout.
+  #[cfg(not(feature = "io-uring"))]
   pub async fn async_wait_for_acknowledgments(&self) -> WriteResult<bool, ()> {
     match &self.qos_policy.reliability {
       None | Some(Reliability::BestEffort) => Ok(true),

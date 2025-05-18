@@ -72,11 +72,14 @@ pub(crate) enum TimedEvent {
 // Ingredients are sendable between threads, whereas the Writer is not.
 pub(crate) struct WriterIngredients {
   pub guid: GUID,
+  #[cfg(not(feature = "io-uring"))]
   pub writer_command_receiver: mio_channel::Receiver<WriterCommand>,
+  #[cfg(not(feature = "io-uring"))]
   pub writer_command_receiver_waker: Arc<Mutex<Option<Waker>>>,
   pub topic_name: String,
   pub(crate) like_stateless: bool, // Usually false (see like_stateless attribute of Writer)
   pub qos_policies: QosPolicies,
+  #[cfg(not(feature = "io-uring"))]
   pub status_sender: StatusChannelSender<DataWriterStatus>,
 
   pub(crate) security_plugins: Option<SecurityPluginsHandle>,
@@ -276,7 +279,9 @@ pub(crate) struct Writer {
   pub data_max_size_serialized: usize,
 
   my_guid: GUID,
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) writer_command_receiver: mio_channel::Receiver<WriterCommand>,
+  #[cfg(not(feature = "io-uring"))]
   writer_command_receiver_waker: Arc<Mutex<Option<Waker>>>,
 
   /// The RTPS ReaderProxy class represents the information an RTPS
@@ -309,14 +314,17 @@ pub(crate) struct Writer {
   /// self.heartbeat_period timed_event_handler sends notification when timer
   /// is up via mio channel to poll in Dp_eventWrapper this also handles
   /// writers cache cleaning timeouts.
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) timed_event_timer: Timer<TimedEvent>,
 
   qos_policies: QosPolicies,
 
   // Used for sending status info about messages sent
+  #[cfg(not(feature = "io-uring"))]
   status_sender: StatusChannelSender<DataWriterStatus>,
   // offered_deadline_status: OfferedDeadlineMissedStatus,
   ack_waiter: Option<AckWaiter>,
+  #[cfg(not(feature = "io-uring"))]
   participant_status_sender: StatusChannelSender<DomainParticipantStatusEvent>,
 
   security_plugins: Option<SecurityPluginsHandle>,
@@ -336,6 +344,7 @@ pub enum WriterCommand {
 }
 
 impl Writer {
+  #[cfg(not(feature = "io-uring"))]
   pub fn new(
     i: WriterIngredients,
     udp_sender: Rc<UDPSender>,
@@ -416,6 +425,82 @@ impl Writer {
     }
   }
 
+  #[cfg(feature = "io-uring")]
+  pub fn new(
+    i: WriterIngredients,
+    udp_sender: Rc<UDPSender>,
+  ) -> Self {
+    // If writer should behave statelessly, only BestEffort QoS is currently
+    // supported
+    if i.like_stateless && i.qos_policies.is_reliable() {
+      panic!("Attempted to create a stateless-like Writer with other than BestEffort reliability");
+    }
+
+    let heartbeat_period = i
+      .qos_policies
+      .reliability
+      .and_then(|reliability| {
+        if matches!(reliability, Reliability::Reliable { .. }) {
+          Some(Duration::from_secs(1))
+        } else {
+          None
+        }
+      })
+      .map(|hbp| {
+        // What is the logic here? Which spec section?
+        if let Some(policy::Liveliness::ManualByTopic { lease_duration }) =
+          i.qos_policies.liveliness
+        {
+          let std_dur = lease_duration;
+          std_dur / 3
+        } else {
+          hbp
+        }
+      });
+
+    // TODO: Configuration value
+    let cache_cleaning_period = Duration::from_secs(6);
+
+    // Start periodic Heartbeat
+    /*
+    if let Some(period) = heartbeat_period {
+      timed_event_timer.set_timeout(std::time::Duration::from(period), TimedEvent::Heartbeat);
+    }
+    // start periodic cache cleaning
+    timed_event_timer.set_timeout(
+      std::time::Duration::from(cache_cleaning_period),
+      TimedEvent::CacheCleaning,
+    );
+    */
+
+    Self {
+      endianness: Endianness::LittleEndian,
+      heartbeat_message_counter: atomic::AtomicI32::new(1),
+      push_mode: true,
+      heartbeat_period,
+      cache_cleaning_period,
+      nack_response_delay: NACK_RESPONSE_DELAY, // default value from dp_event_loop
+      nackfrag_response_delay: NACK_RESPONSE_DELAY, // default value from dp_event_loop
+      repairfrags_continue_delay: std::time::Duration::from_millis(1),
+      nack_suppression_duration: NACK_SUPPRESSION_DURATION,
+      data_max_size_serialized: 1024,
+      // ^^ TODO: Maybe a smarter selection would be in order.
+      // We should get the minimum over all outgoing interfaces.
+      my_guid: i.guid,
+      readers: BTreeMap::new(),
+      matched_readers_count_total: 0,
+      requested_incompatible_qos_count: 0,
+      udp_sender,
+      my_topic_name: i.topic_name.clone(),
+      history_buffer: HistoryBuffer::new(i.topic_name),
+      like_stateless: i.like_stateless,
+      qos_policies: i.qos_policies,
+      ack_waiter: None,
+
+      security_plugins: i.security_plugins,
+    }
+  }
+
   /// To know when token represents a writer we should look entity attribute
   /// kind this entity token can be used in DataWriter -> Writer mio::channel.
   pub fn entity_token(&self) -> Token {
@@ -449,6 +534,7 @@ impl Writer {
   // --------------------------------------------------------------
   // --------------------------------------------------------------
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn handle_timed_event(&mut self) {
     while let Some(e) = self.timed_event_timer.poll() {
       match e {
@@ -457,6 +543,7 @@ impl Writer {
           // ^^ false = This is automatic heartbeat by timer, not manual by application
           // call.
           if let Some(period) = self.heartbeat_period {
+  #[cfg(not(feature = "io-uring"))]
             self
               .timed_event_timer
               .set_timeout(std::time::Duration::from(period), TimedEvent::Heartbeat);
@@ -464,6 +551,7 @@ impl Writer {
         }
         TimedEvent::CacheCleaning => {
           self.handle_cache_cleaning();
+  #[cfg(not(feature = "io-uring"))]
           self.timed_event_timer.set_timeout(
             std::time::Duration::from(self.cache_cleaning_period),
             TimedEvent::CacheCleaning,
@@ -480,6 +568,7 @@ impl Writer {
                 .deadline()
                 .map_or_else(|| Duration::from_millis(10), |dl| dl.0)
                 / 5;
+  #[cfg(not(feature = "io-uring"))]
               self.timed_event_timer.set_timeout(
                 std::time::Duration::from(delay_to_next_repair),
                 TimedEvent::SendRepairData {
@@ -496,6 +585,7 @@ impl Writer {
           if let Some(rp) = self.lookup_reader_proxy_mut(reader_guid) {
             if rp.repair_frags_requested() {
               // more repair needed?
+  #[cfg(not(feature = "io-uring"))]
               self.timed_event_timer.set_timeout(
                 self.repairfrags_continue_delay,
                 TimedEvent::SendRepairFrags {
@@ -545,6 +635,7 @@ impl Writer {
   }
 
   // Receive new data samples from the DDS DataWriter
+  #[cfg(not(feature = "io-uring"))]
   pub fn process_writer_command(&mut self) {
     while let Ok(cc) = self.writer_command_receiver.try_recv() {
       match cc {
@@ -665,6 +756,117 @@ impl Writer {
       }
     }
   }
+
+  #[cfg(feature = "io-uring")]
+  pub fn process_writer_command(&mut self, cmd: WriterCommand) {
+      match cmd {
+        WriterCommand::DDSData {
+          ddsdata: dds_data,
+          write_options,
+          sequence_number,
+        } => {
+          // Insert data to local HistoryBuffer
+          let timestamp =
+            self.insert_to_history_buffer(dds_data, write_options.clone(), sequence_number);
+
+          // If not acting stateless-like, notify reader proxies that there is a new
+          // sample
+          if !self.like_stateless {
+            for reader in &mut self.readers.values_mut() {
+              reader.notify_new_cache_change(sequence_number);
+
+              // If the data is meant for a single reader only, set others as pending GAP for
+              // this sequence number.
+              if let Some(single_reader_guid) = write_options.to_single_reader() {
+                if reader.remote_reader_guid != single_reader_guid {
+                  reader.insert_pending_gap(sequence_number);
+                }
+              }
+            }
+          }
+
+          if self.push_mode {
+            // Send data (DATA or DATAFRAGs) and a Heartbeat
+            if let Some(cc) = self.history_buffer.get_change(timestamp) {
+              let target_reader_opt = match write_options.to_single_reader() {
+                Some(guid) => self.readers.get(&guid), // Sending only to this reader
+                None => None,                          // Sending to all matched readers
+              };
+
+              let send_also_heartbeat = true;
+              self.send_cache_change(cc, send_also_heartbeat, target_reader_opt);
+            } else {
+              error!("Lost the cache change that was just added?!");
+            }
+          } else {
+            // Send Heartbeat only.
+            // Readers will ask for the DATA with ACKNACK, if they are interested.
+            let final_flag = false; // false = request that readers acknowledge with ACKNACK.
+            let liveliness_flag = false; // This is not a manual liveliness assertion (DDS API call), but side-effect of
+            let hb_message = MessageBuilder::new()
+              .heartbeat_msg(
+                self.entity_id(), // from Writer
+                self.history_buffer.first_change_sequence_number(),
+                self.history_buffer.last_change_sequence_number(),
+                self.next_heartbeat_count(),
+                self.endianness,
+                EntityId::UNKNOWN, // to Reader
+                final_flag,
+                liveliness_flag,
+              )
+              .add_header_and_build(self.my_guid.prefix);
+            self.send_message_to_readers(
+              DeliveryMode::Multicast,
+              hb_message,
+              &mut self.readers.values(),
+            );
+          }
+        }
+
+        // WriterCommand::ResetOfferedDeadlineMissedStatus { writer_guid: _, } => {
+        //   self.reset_offered_deadline_missed_status();
+        // }
+        WriterCommand::WaitForAcknowledgments { all_acked } => {
+          if self.like_stateless {
+            error!(
+              "Attempted to wait for acknowledgements in a stateless Writer, which currently only \
+               supports BestEffort QoS. Ignoring. topic={:?}",
+              self.my_topic_name
+            );
+            let _ = all_acked.try_send(()); // Let the poor waiter continue.
+            return;
+          }
+
+          let wait_until = self.history_buffer.last_change_sequence_number();
+          let readers_pending: BTreeSet<_> = self
+            .readers
+            .iter()
+            .filter_map(|(guid, rp)| {
+              if rp.qos().is_reliable() && rp.all_acked_before <= wait_until {
+                Some(*guid)
+              } else {
+                None
+              }
+            })
+            .collect();
+          self.ack_waiter = if readers_pending.is_empty() {
+            // all acked already: try to signal app waiting at DataWriter
+            let _ = all_acked.try_send(());
+            // but we ignore any failure to signal, if no-one is listening
+            // since that is normal. They may have timed out and stopped waiting.
+            None
+          } else {
+            // Someone still needs to ack. Wait for them.
+            Some(AckWaiter {
+              wait_until,
+              complete_channel: all_acked,
+              readers_pending,
+            })
+          };
+        }
+      }
+  }
+
 
   // Returns a boolean telling if the data had to be fragmented
   fn send_cache_change(
@@ -839,11 +1041,14 @@ impl Writer {
       }
     }
 
+    println!("msgs to send: {messages_to_send:?}");
+
     // Send the messages, either to all readers or just one
     for msg in messages_to_send {
       match target_reader_opt {
         None => {
           // To all
+            println!("sending");
           self.send_message_to_readers(DeliveryMode::Multicast, msg, &mut self.readers.values());
         }
         Some(reader_proxy) => {
@@ -1066,6 +1271,7 @@ impl Writer {
           } else {
             reader_proxy.repair_mode = true; // TODO: Is this correct? Do we need to repair immediately?
                                              // set repair timer to fire
+  #[cfg(not(feature = "io-uring"))]
             self.timed_event_timer.set_timeout(
               self.nack_response_delay,
               TimedEvent::SendRepairData {
@@ -1101,6 +1307,7 @@ impl Writer {
         if let Some(reader_proxy) = self.lookup_reader_proxy_mut(reader_guid) {
           reader_proxy.mark_frags_requested(nackfrag.writer_sn, &nackfrag.fragment_number_state);
         }
+  #[cfg(not(feature = "io-uring"))]
         self.timed_event_timer.set_timeout(
           self.nackfrag_response_delay,
           TimedEvent::SendRepairFrags {
@@ -1232,6 +1439,7 @@ impl Writer {
             reader_proxy.mark_all_frags_requested(unsent_sn, num_frags);
 
             // Set a timer to send repair frags if needed
+  #[cfg(not(feature = "io-uring"))]
             self.timed_event_timer.set_timeout(
               self.repairfrags_continue_delay,
               TimedEvent::SendRepairFrags {
@@ -1499,8 +1707,11 @@ impl Writer {
     #[cfg(not(feature = "security"))]
     let encoded: Result<Message, ()> = Ok(message);
 
+    println!("???");
+
     match encoded {
       Ok(message) => {
+          println!("ok");
         let buffer = message.write_to_vec_with_ctx(self.endianness).unwrap();
         let mut already_sent_to = BTreeSet::new();
 
@@ -1510,12 +1721,16 @@ impl Writer {
               if already_sent_to.contains(loc) {
                 trace!("Already sent to {:?}", loc);
               } else {
+                  println!("Sending to locator");
                 self.udp_sender.send_to_locator(&buffer, loc);
                 already_sent_to.insert(loc.clone());
               }
             }
           };
         }
+
+        println!("readers: {readers:?}");
+        //todo!("there currently are no readers allocated (fix that)");
 
         for reader in readers {
           match (
@@ -1552,6 +1767,7 @@ impl Writer {
   }
 
   // Send status to DataWriter or however is listening
+  #[cfg(not(feature = "io-uring"))]
   fn send_status(&self, status: DataWriterStatus) {
     self
       .status_sender
@@ -1567,6 +1783,7 @@ impl Writer {
       });
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn update_reader_proxy(
     &mut self,
     reader_proxy: &RtpsReaderProxy,
@@ -1672,6 +1889,7 @@ impl Writer {
     removed
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn reader_lost(&mut self, guid: GUID) {
     if self.readers.contains_key(&guid) {
       info!(
@@ -1693,6 +1911,7 @@ impl Writer {
 
   // Entire remote participant was lost.
   // Remove all remote readers belonging to it.
+  #[cfg(not(feature = "io-uring"))]
   pub fn participant_lost(&mut self, guid_prefix: GuidPrefix) {
     let lost_readers: Vec<GUID> = self
       .readers
@@ -1712,6 +1931,7 @@ impl Writer {
     &self.my_topic_name
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn send_participant_status(&self, event: DomainParticipantStatusEvent) {
     self
       .participant_status_sender

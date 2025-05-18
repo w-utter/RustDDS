@@ -105,6 +105,7 @@ impl UDPSender {
   }
 
   pub fn send_to_locator(&self, buffer: &[u8], locator: &Locator) {
+      println!("\nsending to locator\n");
     if buffer.len() > 1500 {
       warn!("send_to_locator: Message size = {}", buffer.len());
     }

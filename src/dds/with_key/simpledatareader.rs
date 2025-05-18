@@ -94,6 +94,7 @@ pub struct SimpleDataReader<D: Keyed, DA: DeserializerAdapter<D> = CDRDeserializ
   my_guid: GUID,
 
   // mio_channel::Receiver is not thread-safe, so Mutex protects it.
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) notification_receiver: Mutex<mio_channel::Receiver<()>>,
 
   // SimpleDataReader stores a pointer to a mutex on the topic cache
@@ -103,17 +104,24 @@ pub struct SimpleDataReader<D: Keyed, DA: DeserializerAdapter<D> = CDRDeserializ
 
   deserializer_type: PhantomData<DA>, // This is to provide use for DA
 
+  #[cfg(not(feature = "io-uring"))]
   discovery_command: mio_channel::SyncSender<DiscoveryCommand>,
+  #[cfg(not(feature = "io-uring"))]
   status_receiver: StatusChannelReceiver<DataReaderStatus>,
 
-  #[allow(dead_code)] // TODO: This is currently unused, because we do not implement
+  #[allow(dead_code)]
+  // TODO: This is currently unused, because we do not implement
   // resetting deadline missed status. Remove attribute when it is supported.
+  #[cfg(not(feature = "io-uring"))]
   reader_command: mio_channel::SyncSender<ReaderCommand>,
+  #[cfg(not(feature = "io-uring"))]
   data_reader_waker: Arc<Mutex<Option<Waker>>>,
 
+  #[cfg(not(feature = "io-uring"))]
   event_source: PollEventSource,
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> Drop for SimpleDataReader<D, DA>
 where
   D: Keyed,
@@ -146,6 +154,7 @@ where
   DA: DeserializerAdapter<D>,
 {
   #[allow(clippy::too_many_arguments)]
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) fn new(
     subscriber: Subscriber,
     my_id: EntityId,
@@ -199,10 +208,56 @@ where
       event_source,
     })
   }
+
+  #[cfg(feature = "io-uring")]
+  pub(crate) fn new(
+    subscriber: Subscriber,
+    my_id: EntityId,
+    topic: Topic,
+    qos_policy: QosPolicies,
+    // Each notification sent to this channel must be try_recv'd
+    topic_cache: Arc<Mutex<TopicCache>>,
+  ) -> CreateResult<Self> {
+    let dp = match subscriber.participant() {
+      Some(dp) => dp,
+      None => {
+        return Err(CreateError::ResourceDropped {
+          reason: "Cannot create new DataReader, DomainParticipant doesn't exist.".to_string(),
+        })
+      }
+    };
+
+    let my_guid = GUID::new_with_prefix_and_id(dp.guid_prefix(), my_id);
+
+    // Verify that the topic cache corresponds to the topic of the Reader
+    let topic_cache_name = topic_cache.lock().unwrap().topic_name();
+    if topic.name() != topic_cache_name {
+      return Err(CreateError::Internal {
+        reason: format!(
+          "Topic name = {} and topic cache name = {} not equal when creating a SimpleDataReader",
+          topic.name(),
+          topic_cache_name
+        ),
+      });
+    }
+
+    Ok(Self {
+      my_subscriber: subscriber,
+      qos_policy,
+      my_guid,
+      topic_cache,
+      read_state: Mutex::new(ReadState::new()),
+      my_topic: topic,
+      deserializer_type: PhantomData,
+    })
+  }
+
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) fn set_waker(&self, w: Option<Waker>) {
     *self.data_reader_waker.lock().unwrap() = w;
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) fn drain_read_notifications(&self) {
     let rec = self.notification_receiver.lock().unwrap();
     while rec.try_recv().is_ok() {}
@@ -414,6 +469,7 @@ where
     &self.my_topic
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn as_async_stream<S>(&self) -> SimpleDataReaderStream<D, S, DA>
   where
     DA: DefaultDecoder<D, Decoder = S>,
@@ -423,6 +479,7 @@ where
     Self::as_async_stream_with(self, DA::DECODER)
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn as_async_stream_with<S>(&self, decoder: S) -> SimpleDataReaderStream<D, S, DA>
   where
     S: Decode<DA::Decoded, DA::DecodedKey> + Clone,
@@ -446,6 +503,7 @@ where
 
 // This is  not part of DDS spec. We implement mio mio_06::Evented so that the
 // application can asynchronously poll DataReader(s).
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> mio_06::Evented for SimpleDataReader<D, DA>
 where
   D: Keyed,
@@ -486,6 +544,7 @@ where
   }
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> mio_08::event::Source for SimpleDataReader<D, DA>
 where
   D: Keyed,
@@ -514,6 +573,7 @@ where
   }
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<'a, D, DA> StatusEvented<'a, DataReaderStatus, SimpleDataReaderEventStream<'a, D, DA>>
   for SimpleDataReader<D, DA>
 where
@@ -554,6 +614,7 @@ where
 
 // Async interface to the SimpleDataReader
 
+#[cfg(not(feature = "io-uring"))]
 pub struct SimpleDataReaderStream<
   'a,
   D: Keyed + 'static,
@@ -568,6 +629,7 @@ pub struct SimpleDataReaderStream<
 // ----------------------------------------------
 
 // https://users.rust-lang.org/t/take-in-impl-future-cannot-borrow-data-in-a-dereference-of-pin/52042
+#[cfg(not(feature = "io-uring"))]
 impl<D, S, DA> Unpin for SimpleDataReaderStream<'_, D, S, DA>
 where
   D: Keyed + 'static,
@@ -576,6 +638,7 @@ where
 {
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, S, DA> Stream for SimpleDataReaderStream<'_, D, S, DA>
 where
   D: Keyed + 'static,
@@ -633,6 +696,7 @@ where
   } // fn
 } // impl
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, S, DA> FusedStream for SimpleDataReaderStream<'_, D, S, DA>
 where
   D: Keyed + 'static,
@@ -647,6 +711,7 @@ where
 // ----------------------------------------------
 // ----------------------------------------------
 
+#[cfg(not(feature = "io-uring"))]
 pub struct SimpleDataReaderEventStream<
   'a,
   D: Keyed + 'static,
@@ -655,6 +720,7 @@ pub struct SimpleDataReaderEventStream<
   simple_datareader: &'a SimpleDataReader<D, DA>,
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> Stream for SimpleDataReaderEventStream<'_, D, DA>
 where
   D: Keyed + 'static,
@@ -673,6 +739,7 @@ where
   } // fn
 } // impl
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> FusedStream for SimpleDataReaderEventStream<'_, D, DA>
 where
   D: Keyed + 'static,

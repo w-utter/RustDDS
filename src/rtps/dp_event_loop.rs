@@ -35,6 +35,7 @@ use crate::{
     dds_cache::DDSCache,
     entity::RTPSEntity,
     guid::{EntityId, GuidPrefix, TokenDecode, GUID},
+    locator::Locator,
   },
 };
 #[cfg(feature = "security")]
@@ -58,47 +59,174 @@ pub(crate) enum EventLoopCommand {
   PrepareStop,
 }
 
+pub(crate) struct Listeners {
+  pub multicast_discovery: Option<UDPListener>,
+  pub unicast_discovery: UDPListener,
+  pub multicast_user_traffic: Option<UDPListener>,
+  pub unicast_user_traffic: UDPListener,
+}
+
+impl Listeners {
+  pub(crate) fn to_locator_addrs(&self) -> HashMap<Token, Vec<Locator>> {
+    let to_loc_addr = |t, l: &UDPListener| match l.to_locator_address() {
+      Ok(locs) => locs,
+      Err(e) => {
+        error!("No local network address for token {:?}: {:?}", t, e);
+        vec![]
+      }
+    };
+    let mut locs = HashMap::with_capacity(4);
+
+    if let Some(mc_disc) = self.multicast_discovery.as_ref() {
+      locs.insert(
+        DISCOVERY_MUL_LISTENER_TOKEN,
+        to_loc_addr(DISCOVERY_MUL_LISTENER_TOKEN, &mc_disc),
+      );
+    }
+
+    locs.insert(
+      DISCOVERY_LISTENER_TOKEN,
+      to_loc_addr(DISCOVERY_LISTENER_TOKEN, &self.unicast_discovery),
+    );
+
+    if let Some(mc_ut) = self.multicast_user_traffic.as_ref() {
+      locs.insert(
+        USER_TRAFFIC_MUL_LISTENER_TOKEN,
+        to_loc_addr(USER_TRAFFIC_MUL_LISTENER_TOKEN, mc_ut),
+      );
+    }
+    locs.insert(
+      USER_TRAFFIC_LISTENER_TOKEN,
+      to_loc_addr(USER_TRAFFIC_LISTENER_TOKEN, &self.unicast_user_traffic),
+    );
+    locs
+  }
+
+  pub(crate) fn new(
+    multicast_discovery: Option<UDPListener>,
+    unicast_discovery: UDPListener,
+    multicast_user_traffic: Option<UDPListener>,
+    unicast_user_traffic: UDPListener,
+  ) -> Self {
+    Self {
+      multicast_discovery,
+      unicast_discovery,
+      multicast_user_traffic,
+      unicast_user_traffic,
+    }
+  }
+
+  pub fn read_buf(&mut self, entry: io_uring::cqueue::Entry) -> Option<&[u8]> {
+    //NOTE: we assume here that we already have the correct domain number.
+    let shifted = entry.user_data() >> 7;
+
+    match shifted {
+      1 => {
+        if let Some(mcd) = self.multicast_discovery.as_mut() {
+          mcd.read_buf(entry)
+        } else {
+          None
+        }
+      }
+      2 => self.unicast_discovery.read_buf(entry),
+      3 => {
+        if let Some(mcut) = self.multicast_user_traffic.as_mut() {
+          mcut.read_buf(entry)
+        } else {
+          None
+        }
+      }
+      4 => self.unicast_user_traffic.read_buf(entry),
+      _ => todo!("could not find id"),
+    }
+  }
+}
+
+#[cfg(feature = "io-uring")]
+impl Register for Listeners {
+  fn register_io_uring(
+    &mut self,
+    ring: &mut IoUring,
+    udata: u64,
+    idx: &mut u16,
+  ) -> std::io::Result<()> {
+    if udata > 101 {
+      todo!("domain ids only range between 1..=101");
+    }
+
+    let shifted = move |field: u64| udata | (field << 7);
+
+    if let Some(mc_disc) = self.multicast_discovery.as_mut() {
+      mc_disc.register_io_uring(ring, shifted(1), idx)?;
+    }
+
+    self
+      .unicast_discovery
+      .register_io_uring(ring, shifted(2), idx)?;
+
+    if let Some(mc_ut) = self.multicast_user_traffic.as_mut() {
+      mc_ut.register_io_uring(ring, shifted(3), idx)?;
+    }
+
+    self
+      .unicast_user_traffic
+      .register_io_uring(ring, shifted(4), idx)?;
+    Ok(())
+  }
+}
+
 pub struct DPEventLoop {
   domain_info: DomainInfo,
+  #[cfg(not(feature = "io-uring"))]
   poll: Poll,
   dds_cache: Arc<RwLock<DDSCache>>,
   discovery_db: Arc<RwLock<DiscoveryDB>>,
-  udp_listeners: HashMap<Token, UDPListener>,
-  message_receiver: MessageReceiver, // This contains our Readers
+  pub udp_listeners: Listeners,
+  pub message_receiver: MessageReceiver, // This contains our Readers
 
   // If security is enabled, this contains the security plugins
   #[cfg(feature = "security")]
   security_plugins_opt: Option<SecurityPluginsHandle>,
 
   // Adding readers
+  #[cfg(not(feature = "io-uring"))]
   add_reader_receiver: TokenReceiverPair<ReaderIngredients>,
+  #[cfg(not(feature = "io-uring"))]
   remove_reader_receiver: TokenReceiverPair<GUID>,
 
   // Writers
+  #[cfg(not(feature = "io-uring"))]
   add_writer_receiver: TokenReceiverPair<WriterIngredients>,
+  #[cfg(not(feature = "io-uring"))]
   remove_writer_receiver: TokenReceiverPair<GUID>,
+  #[cfg(not(feature = "io-uring"))]
   stop_poll_receiver: mio_channel::Receiver<EventLoopCommand>,
   // GuidPrefix sent in this channel needs to be RTPSMessage source_guid_prefix. Writer needs this
   // to locate RTPSReaderProxy if negative acknack.
+  #[cfg(not(feature = "io-uring"))]
   ack_nack_receiver: mio_channel::Receiver<(GuidPrefix, AckSubmessage)>,
 
   writers: HashMap<EntityId, Writer>,
   udp_sender: Rc<UDPSender>,
 
+  #[cfg(not(feature = "io-uring"))]
   participant_status_sender: StatusChannelSender<DomainParticipantStatusEvent>,
 
+  #[cfg(not(feature = "io-uring"))]
   discovery_update_notification_receiver: mio_channel::Receiver<DiscoveryNotificationType>,
-  #[cfg(feature = "security")]
+  #[cfg(all(feature = "security", not(feature = "io-uring")))]
   discovery_command_sender: mio_channel::SyncSender<DiscoveryCommand>,
 }
 
 impl DPEventLoop {
   // This pub(crate) , because it should be constructed only by DomainParticipant.
+  #[cfg(not(feature = "io-uring"))]
   #[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
+
   pub(crate) fn new(
     domain_info: DomainInfo,
     dds_cache: Arc<RwLock<DDSCache>>,
-    udp_listeners: HashMap<Token, UDPListener>,
+    udp_listeners: Listeners,
     discovery_db: Arc<RwLock<DiscoveryDB>>,
     participant_guid_prefix: GuidPrefix,
     add_reader_receiver: TokenReceiverPair<ReaderIngredients>,
@@ -227,6 +355,7 @@ impl DPEventLoop {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn event_loop(self) {
     let mut events = Events::with_capacity(16); // too small capacity just delays events to next poll
 
@@ -314,6 +443,7 @@ impl DPEventLoop {
               | DISCOVERY_MUL_LISTENER_TOKEN
               | USER_TRAFFIC_LISTENER_TOKEN
               | USER_TRAFFIC_MUL_LISTENER_TOKEN => {
+                /*
                 let udp_messages = ev_wrapper
                   .udp_listeners
                   .get_mut(&event.token())
@@ -327,6 +457,7 @@ impl DPEventLoop {
                 for packet in udp_messages {
                   ev_wrapper.message_receiver.handle_received_packet(&packet);
                 }
+                */
               }
               ADD_READER_TOKEN | REMOVE_READER_TOKEN => {
                 ev_wrapper.handle_reader_action(&event);
@@ -449,6 +580,34 @@ impl DPEventLoop {
     } // loop
   } // fn
 
+  #[cfg(feature = "io-uring")]
+  pub(crate) fn new(
+    domain_info: DomainInfo,
+    dds_cache: Arc<RwLock<DDSCache>>,
+    udp_listeners: Listeners,
+    discovery_db: Arc<RwLock<DiscoveryDB>>,
+    participant_guid_prefix: GuidPrefix,
+    security_plugins_opt: Option<SecurityPluginsHandle>,
+  ) -> Self {
+    // port number 0 means OS chooses an available port number.
+    let udp_sender = UDPSender::new(0).expect("UDPSender construction fail"); // TODO
+
+    #[cfg(not(feature = "security"))]
+    let security_plugins_opt = security_plugins_opt.and(None); // make sure it is None an consume value
+
+    Self {
+      domain_info,
+      dds_cache,
+      discovery_db,
+      udp_listeners,
+      udp_sender: Rc::new(udp_sender),
+      message_receiver: MessageReceiver::new(participant_guid_prefix, security_plugins_opt.clone()),
+      #[cfg(feature = "security")]
+      security_plugins_opt,
+      writers: HashMap::new(),
+    }
+  }
+
   #[cfg(feature = "security")] // Currently used only with security.
                                // Just remove attribute if used also without.
   fn send_participant_status(&self, event: DomainParticipantStatusEvent) {
@@ -458,6 +617,7 @@ impl DPEventLoop {
       .unwrap_or_else(|e| error!("Cannot report participant status: {e:?}"));
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn handle_reader_action(&mut self, event: &Event) {
     match event.token() {
       ADD_READER_TOKEN => {
@@ -475,6 +635,7 @@ impl DPEventLoop {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn handle_writer_action(&mut self, event: &Event) {
     match event.token() {
       ADD_WRITER_TOKEN => {
@@ -494,6 +655,7 @@ impl DPEventLoop {
   /// Writer timed events can be heartbeats or cache cleaning events.
   /// events are distinguished by TimerMessageType which is send via mio
   /// channel. Channel token in
+  #[cfg(not(feature = "io-uring"))]
   fn handle_writer_timed_event(&mut self, entity_id: EntityId) {
     if let Some(writer) = self.writers.get_mut(&entity_id) {
       writer.handle_timed_event();
@@ -502,6 +664,7 @@ impl DPEventLoop {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn handle_reader_timed_event(&mut self, entity_id: EntityId) {
     if let Some(reader) = self.message_receiver.reader_mut(entity_id) {
       reader.handle_timed_event();
@@ -510,6 +673,7 @@ impl DPEventLoop {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn handle_writer_acknack_action(&mut self, _event: &Event) {
     while let Ok((acknack_sender_prefix, acknack_submessage)) = self.ack_nack_receiver.try_recv() {
       let writer_guid = GUID::new_with_prefix_and_id(
@@ -537,6 +701,7 @@ impl DPEventLoop {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn update_participant(&mut self, participant_guid_prefix: GuidPrefix) {
     debug!(
       "update_participant {:?} myself={}",
@@ -667,6 +832,7 @@ impl DPEventLoop {
     );
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn remote_participant_lost(&mut self, participant_guid_prefix: GuidPrefix) {
     info!(
       "remote_participant_lost guid_prefix={:?}",
@@ -693,6 +859,7 @@ impl DPEventLoop {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn remote_reader_discovered(&mut self, remote_reader: &DiscoveredReaderData) {
     for writer in self.writers.values_mut() {
       if remote_reader.subscription_topic_data.topic_name() == writer.topic_name() {
@@ -762,12 +929,14 @@ impl DPEventLoop {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn remote_reader_lost(&mut self, reader_guid: GUID) {
     for writer in self.writers.values_mut() {
       writer.reader_lost(reader_guid);
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn remote_writer_discovered(&mut self, remote_writer: &DiscoveredWriterData) {
     // update writer proxies in local readers
     for reader in self.message_receiver.available_readers.values_mut() {
@@ -837,12 +1006,14 @@ impl DPEventLoop {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn remote_writer_lost(&mut self, writer_guid: GUID) {
     for reader in self.message_receiver.available_readers.values_mut() {
       reader.remove_writer_proxy(writer_guid);
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn add_local_reader(&mut self, reader_ing: ReaderIngredients) {
     let timer = new_simple_timer();
     self
@@ -878,6 +1049,20 @@ impl DPEventLoop {
     self.message_receiver.add_reader(new_reader);
   }
 
+  #[cfg(feature = "io-uring")]
+  pub(crate) fn add_local_reader(&mut self, reader_ing: ReaderIngredients) {
+    let mut new_reader = Reader::new(
+      reader_ing,
+      self.udp_sender.clone(),
+    );
+
+    //new_reader.set_requested_deadline_check_timer();
+    trace!("Add reader: {:?}", new_reader);
+    self.message_receiver.add_reader(new_reader);
+  }
+
+
+  #[cfg(not(feature = "io-uring"))]
   fn remove_local_reader(&mut self, reader_guid: GUID) {
     if let Some(old_reader) = self.message_receiver.remove_reader(reader_guid) {
       self
@@ -906,6 +1091,7 @@ impl DPEventLoop {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn add_local_writer(&mut self, writer_ing: WriterIngredients) {
     let timer = new_simple_timer();
     self
@@ -938,6 +1124,22 @@ impl DPEventLoop {
     self.writers.insert(new_writer.guid().entity_id, new_writer);
   }
 
+  pub fn writer_mut(&mut self, id: &EntityId) -> Option<&mut Writer> {
+      self.writers.get_mut(id)
+  }
+
+  #[cfg(feature = "io-uring")]
+  pub(crate) fn add_local_writer(&mut self, writer_ing: WriterIngredients) {
+    let new_writer = Writer::new(
+      writer_ing,
+      self.udp_sender.clone(),
+    );
+
+    self.writers.insert(new_writer.guid().entity_id, new_writer);
+  }
+
+
+  #[cfg(not(feature = "io-uring"))]
   fn remove_local_writer(&mut self, writer_guid: &GUID) {
     if let Some(w) = self.writers.remove(&writer_guid.entity_id) {
       self
@@ -1046,6 +1248,24 @@ fn check_are_endpoints_securities_compatible(
     // TODO: Does it actually make sense to ignore the masks if they're not valid?
     // Seems a bit strange. Currently we require that all masks are valid
     false
+  }
+}
+
+#[cfg(feature = "io-uring")]
+use io_uring::IoUring;
+
+#[cfg(feature = "io-uring")]
+use crate::network::util::Register;
+
+#[cfg(feature = "io-uring")]
+impl Register for DPEventLoop {
+  fn register_io_uring(
+    &mut self,
+    ring: &mut IoUring,
+    udata: u64,
+    idx: &mut u16,
+  ) -> std::io::Result<()> {
+    self.udp_listeners.register_io_uring(ring, udata, idx)
   }
 }
 

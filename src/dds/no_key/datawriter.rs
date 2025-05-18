@@ -83,6 +83,7 @@ where
   /// let some_data = SomeType {};
   /// data_writer.write(some_data, None).unwrap();
   /// ```
+  #[cfg(not(feature = "io-uring"))]
   pub fn write(&self, data: D, source_timestamp: Option<Timestamp>) -> WriteResult<(), D> {
     self
       .keyed_datawriter
@@ -90,6 +91,7 @@ where
       .map_err(unwrap_no_key_write_error)
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn write_with_options(
     &self,
     data: D,
@@ -125,6 +127,7 @@ where
   ///
   /// data_writer.wait_for_acknowledgments(Duration::from_millis(100));
   /// ```
+  #[cfg(not(feature = "io-uring"))]
   pub fn wait_for_acknowledgments(&self, max_wait: Duration) -> WriteResult<bool, ()> {
     self.keyed_datawriter.wait_for_acknowledgments(max_wait)
   }
@@ -327,6 +330,7 @@ where
   ///
   /// data_writer.assert_liveliness();
   /// ```
+  #[cfg(not(feature = "io-uring"))]
   pub fn assert_liveliness(&self) -> WriteResult<(), ()> {
     self.keyed_datawriter.assert_liveliness()
   }
@@ -394,6 +398,7 @@ where
 
 /// WARNING! UNTESTED
 //  TODO: test
+#[cfg(not(feature = "io-uring"))]
 impl<'a, D, SA> StatusEvented<'a, DataWriterStatus, StatusReceiverStream<'a, DataWriterStatus>>
   for DataWriter<D, SA>
 where
@@ -432,6 +437,7 @@ impl<D, SA: SerializerAdapter<D>> HasQoSPolicy for DataWriter<D, SA> {
 // async writing implementation
 //
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, SA> DataWriter<D, SA>
 where
   SA: SerializerAdapter<D>,

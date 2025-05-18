@@ -47,3 +47,13 @@ pub fn get_local_multicast_ip_addrs() -> io::Result<Vec<IpAddr>> {
       .collect(),
   )
 }
+
+#[cfg(feature = "io-uring")]
+pub trait Register {
+  fn register_io_uring(
+    &mut self,
+    ring: &mut io_uring::IoUring,
+    udata: u64,
+    idx: &mut u16,
+  ) -> std::io::Result<()>;
+}

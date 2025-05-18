@@ -76,8 +76,10 @@ pub(crate) struct DiscoveryDB {
   topics: BTreeMap<String, BTreeMap<GUID, (DiscoveredVia, DiscoveredTopicData)>>,
 
   // sender for notifying (potential) waiters in participant.find_topic() call
+  #[cfg(not(feature = "io-uring"))]
   topic_updated_sender: mio_extras::channel::SyncSender<()>,
 
+  #[cfg(not(feature = "io-uring"))]
   participant_status_sender: StatusChannelSender<DomainParticipantStatusEvent>,
 }
 
@@ -122,8 +124,10 @@ pub(crate) fn discovery_db_write(
 impl DiscoveryDB {
   pub fn new(
     my_guid: GUID,
-    topic_updated_sender: mio_extras::channel::SyncSender<()>,
-    participant_status_sender: StatusChannelSender<DomainParticipantStatusEvent>,
+    #[cfg(not(feature = "io-uring"))] topic_updated_sender: mio_extras::channel::SyncSender<()>,
+    #[cfg(not(feature = "io-uring"))] participant_status_sender: StatusChannelSender<
+      DomainParticipantStatusEvent,
+    >,
   ) -> Self {
     Self {
       my_guid,
@@ -138,11 +142,14 @@ impl DiscoveryDB {
       external_topic_readers_attic: BTreeMap::new(),
       external_topic_writers_attic: BTreeMap::new(),
       topics: BTreeMap::new(),
+      #[cfg(not(feature = "io-uring"))]
       topic_updated_sender,
+      #[cfg(not(feature = "io-uring"))]
       participant_status_sender,
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn send_participant_status(&self, event: DomainParticipantStatusEvent) {
     self
       .participant_status_sender
@@ -617,14 +624,17 @@ impl DiscoveryDB {
       let mut b = BTreeMap::new();
       b.insert(updater, (discovered_via, dtd.clone()));
       self.topics.insert(topic_name, b);
+      #[cfg(not(feature = "io-uring"))]
       self.send_participant_status(DomainParticipantStatusEvent::TopicDetected {
         name: dtd.topic_data.name.clone(),
         type_name: dtd.topic_data.type_name.clone(),
       });
     };
+    #[cfg(not(feature = "io-uring"))]
     if let Some(ev) = inconsistency_event_to_send {
       self.send_participant_status(ev);
     }
+    #[cfg(not(feature = "io-uring"))]
     if notify {
       self
         .topic_updated_sender

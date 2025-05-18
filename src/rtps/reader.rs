@@ -68,17 +68,22 @@ pub(crate) enum TimedEvent {
 
 // Some pieces necessary to construct a reader.
 // These can be sent between threads, whereas a Reader cannot.
-pub(crate) struct ReaderIngredients {
+pub struct ReaderIngredients {
   pub guid: GUID,
+  #[cfg(not(feature = "io-uring"))]
   pub notification_sender: mio_channel::SyncSender<()>,
+  #[cfg(not(feature = "io-uring"))]
   pub status_sender: StatusChannelSender<DataReaderStatus>,
   pub topic_name: String,
   pub(crate) topic_cache_handle: Arc<Mutex<TopicCache>>, /* A handle to the topic cache in DDS
                                                           * cache */
   pub(crate) like_stateless: bool, // Usually false (see like_stateless attribute of Reader)
   pub qos_policy: QosPolicies,
+  #[cfg(not(feature = "io-uring"))]
   pub data_reader_command_receiver: mio_channel::Receiver<ReaderCommand>,
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) data_reader_waker: Arc<Mutex<Option<Waker>>>,
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) poll_event_sender: mio_source::PollEventSender,
 
   pub(crate) security_plugins: Option<SecurityPluginsHandle>,
@@ -103,7 +108,9 @@ impl fmt::Debug for ReaderIngredients {
 
 pub(crate) struct Reader {
   // Should the instant be sent?
+  #[cfg(not(feature = "io-uring"))]
   notification_sender: mio_channel::SyncSender<()>,
+  #[cfg(not(feature = "io-uring"))]
   status_sender: StatusChannelSender<DataReaderStatus>,
   udp_sender: Rc<UDPSender>,
 
@@ -142,11 +149,16 @@ pub(crate) struct Reader {
   requested_deadline_missed_count: i32,
   offered_incompatible_qos_count: i32,
 
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) timed_event_timer: Timer<TimedEvent>,
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) data_reader_command_receiver: mio_channel::Receiver<ReaderCommand>,
+  #[cfg(not(feature = "io-uring"))]
   data_reader_waker: Arc<Mutex<Option<Waker>>>,
+  #[cfg(not(feature = "io-uring"))]
   poll_event_sender: mio_source::PollEventSender,
 
+  #[cfg(not(feature = "io-uring"))]
   participant_status_sender: StatusChannelSender<DomainParticipantStatusEvent>,
 
   #[allow(dead_code)] // to avoid warning if no security feature
@@ -160,6 +172,7 @@ const FRAGMENT_ASSEMBLY_TIMEOUT: Duration = Duration::from_secs(10);
 const MIN_FRAGMENT_GC_INTERVAL: Duration = Duration::from_secs(2);
 
 impl Reader {
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) fn new(
     i: ReaderIngredients,
     udp_sender: Rc<UDPSender>,
@@ -215,6 +228,55 @@ impl Reader {
       security_plugins: i.security_plugins,
     }
   }
+
+  #[cfg(feature = "io-uring")]
+  pub(crate) fn new(
+    i: ReaderIngredients,
+    udp_sender: Rc<UDPSender>,
+  ) -> Self {
+    // Verify that the topic cache corresponds to the topic of the Reader
+    let topic_cache_name = i.topic_cache_handle.lock().unwrap().topic_name();
+    if i.topic_name != topic_cache_name {
+      panic!(
+        "Topic name = {} and topic cache name = {} not equal when creating a Reader",
+        i.topic_name, topic_cache_name
+      );
+    }
+
+    // If reader should be stateless, only BestEffort QoS is supported
+    if i.like_stateless && i.qos_policy.is_reliable() {
+      panic!("Attempted to create a stateless Reader with other than BestEffort reliability");
+    }
+
+    Self {
+      udp_sender,
+      like_stateless: i.like_stateless,
+      reliability: i
+        .qos_policy
+        .reliability() // use qos specification
+        .unwrap_or(policy::Reliability::BestEffort), // or default to BestEffort
+      topic_cache: i.topic_cache_handle,
+      topic_name: i.topic_name,
+      qos_policy: i.qos_policy,
+
+      #[cfg(test)]
+      seqnum_instant_map: BTreeMap::new(),
+      my_guid: i.guid,
+
+      heartbeat_response_delay: StdDuration::new(0, 500_000_000), // 0,5sec
+      heartbeat_suppression_duration: StdDuration::new(0, 0),
+      received_heartbeat_count: 0,
+      fragment_assemblers: BTreeMap::new(),
+      last_fragment_garbage_collect: Timestamp::now(),
+      matched_writers: BTreeMap::new(),
+      writer_match_count_total: 0,
+      requested_deadline_missed_count: 0,
+      offered_incompatible_qos_count: 0,
+
+      security_plugins: i.security_plugins,
+    }
+  }
+
   // TODO: check if it's necessary to implement different handlers for discovery
   // and user messages
 
@@ -224,6 +286,7 @@ impl Reader {
     self.guid().entity_id.as_token()
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn set_requested_deadline_check_timer(&mut self) {
     if let Some(deadline) = self.qos_policy.deadline {
       debug!(
@@ -242,6 +305,7 @@ impl Reader {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn send_status_change(&self, change: DataReaderStatus) {
     match self.status_sender.try_send(change) {
       Ok(()) => (), // expected result
@@ -263,6 +327,7 @@ impl Reader {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn send_participant_status(&self, event: DomainParticipantStatusEvent) {
     self
       .participant_status_sender
@@ -316,6 +381,7 @@ impl Reader {
     changes
   } // fn
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn handle_timed_event(&mut self) {
     while let Some(e) = self.timed_event_timer.poll() {
       match e {
@@ -327,6 +393,7 @@ impl Reader {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn process_command(&mut self) {
     trace!("process_command {:?}", self.my_guid);
     loop {
@@ -349,6 +416,7 @@ impl Reader {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn handle_requested_deadline_event(&mut self) {
     debug!("handle_requested_deadline_event");
     for missed_deadline in self.calculate_if_requested_deadline_is_missed() {
@@ -383,6 +451,7 @@ impl Reader {
   }
 
   // updates or adds a new writer proxy, doesn't touch changes
+  #[cfg(not(feature = "io-uring"))]
   pub fn update_writer_proxy(&mut self, proxy: RtpsWriterProxy, offered_qos: &QosPolicies) {
     if self.like_stateless {
       debug!(
@@ -454,6 +523,7 @@ impl Reader {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn remove_writer_proxy(&mut self, writer_guid: GUID) {
     if self.matched_writers.contains_key(&writer_guid) {
       self.matched_writers.remove(&writer_guid);
@@ -474,6 +544,7 @@ impl Reader {
 
   // Entire remote participant was lost.
   // Remove all remote writers belonging to it.
+  #[cfg(not(feature = "io-uring"))]
   pub fn participant_lost(&mut self, guid_prefix: GuidPrefix) {
     let lost_writers: Vec<GUID> = self
       .matched_writers
@@ -498,6 +569,7 @@ impl Reader {
   }
 
   #[cfg(test)]
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) fn matched_writer_add(
     &mut self,
     remote_writer_guid: GUID,
@@ -529,7 +601,7 @@ impl Reader {
     data: Data,
     data_flags: BitFlags<DATA_Flags>,
     mr_state: &MessageReceiverState,
-  ) {
+  ) -> Option<GUID> {
     // trace!("handle_data_msg entry");
     let receive_timestamp = Timestamp::now();
 
@@ -564,7 +636,10 @@ impl Reader {
         writer_guid,
         writer_seq_num,
       ),
-      Err(e) => debug!("Parsing DATA to DDSData failed: {}", e),
+      Err(e) => {
+          debug!("Parsing DATA to DDSData failed: {}", e);
+          None
+      }
     }
   }
 
@@ -702,7 +777,7 @@ impl Reader {
     write_options: WriteOptions,
     writer_guid: GUID,
     writer_sn: SequenceNumber,
-  ) {
+  ) -> Option<GUID> {
     trace!(
       "handle_data_msg from {:?} seq={:?} topic={:?} reliability={:?} stateless={:?}",
       &writer_guid,
@@ -711,6 +786,11 @@ impl Reader {
       self.reliability,
       self.like_stateless,
     );
+
+    println!("received on GUID: {:?} from GUID: {:?}", self.my_guid, writer_guid);
+
+    println!("\nreceived dds data: {dds_data:?}\n");
+
     if !self.like_stateless {
       let my_entity_id = self.my_guid.entity_id; // to please borrow checker
       if let Some(writer_proxy) = self.matched_writer_mut(writer_guid) {
@@ -723,7 +803,7 @@ impl Reader {
             // incrementing sequence numbers. (eProsima shapes demo 2.1.0 from
             // 2021)
           } else {
-            return;
+            return None;
           }
         }
         // Add the change and get the instant
@@ -738,12 +818,14 @@ impl Reader {
         // We just ignore the data in such a case
         // ... unless it is Discovery traffic.
         if writer_guid.entity_id.entity_kind.is_user_defined() {
-          return;
+          return None;
         }
       }
     } else {
       // stateless reader: nothing to do before making cache change
     }
+
+    // TODO: callback fn here?
 
     self.make_cache_change(
       dds_data,
@@ -757,7 +839,10 @@ impl Reader {
     #[cfg(test)]
     self.seqnum_instant_map.insert(writer_sn, receive_timestamp);
 
+  #[cfg(not(feature = "io-uring"))]
     self.notify_cache_change();
+
+    Some(self.my_guid)
   }
 
   fn data_to_dds_data(
@@ -920,6 +1005,7 @@ impl Reader {
         let marker_moved = this
           .acquire_the_topic_cache_guard()
           .mark_reliably_received_before(writer_guid, writer_proxy.all_ackable_before());
+      #[cfg(not(feature = "io-uring"))]
         if marker_moved {
           this.notify_cache_change();
         }
@@ -1127,6 +1213,7 @@ impl Reader {
     // Receiving a GAP could make a Reliable stream.
     // E.g. we had #2, but were missing #1. Now GAP says that #1 does not exist.
     // Then a Reliable Datareader
+      #[cfg(not(feature = "io-uring"))]
     if marker_moved {
       self.notify_cache_change();
     }
@@ -1208,6 +1295,7 @@ impl Reader {
 
   // notifies DataReaders (or any listeners that history cache has changed for
   // this reader) likely use of mio channel
+  #[cfg(not(feature = "io-uring"))]
   pub fn notify_cache_change(&mut self) {
     // async notify mechanism
     self

@@ -3,6 +3,8 @@ use std::{
   time::Duration as StdDuration,
 };
 
+use timerfd::{TimerFd, ClockId, TimerState, SetTimeFlags};
+
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 use mio_06::{Events, Poll, PollOpt, Ready};
@@ -10,8 +12,9 @@ use mio_extras::{channel as mio_channel, timer::Timer};
 use paste::paste; // token pasting macro
 
 use crate::{
+    Topic,
   dds::{
-    participant::DomainParticipantWeak,
+    participant::{DomainParticipantWeak, DomainParticipantDisc, DomainParticipantInner},
     qos::{
       policy::{
         Deadline, DestinationOrder, Durability, History, Liveliness, Ownership, Presentation,
@@ -33,6 +36,7 @@ use crate::{
   },
   polling::{new_simple_timer, TimerPolicy},
   rtps::constant::*,
+  rtps::dp_event_loop::DPEventLoop,
   serialization::{pl_cdr_adapters::*, CDRDeserializerAdapter, CDRSerializerAdapter},
   structure::{
     duration::Duration,
@@ -197,21 +201,31 @@ pub(crate) enum NormalDiscoveryPermission {
   Deny,
 }
 
-pub(crate) struct Discovery {
+#[cfg(feature = "io-uring")]
+use io_uring::{IoUring, types::{Fd, BufRing}, opcode::PollAdd};
+
+pub struct Discovery {
+  #[cfg(not(feature = "io-uring"))]
   poll: Poll,
+  #[cfg(not(feature = "io-uring"))]
   domain_participant: DomainParticipantWeak,
   discovery_db: Arc<RwLock<DiscoveryDB>>,
 
   // Discovery started sender confirms to application thread that we are running
+  #[cfg(not(feature = "io-uring"))]
   discovery_started_sender: std::sync::mpsc::Sender<CreateResult<()>>,
   // notification sender goes to dp_event_loop thread
+  #[cfg(not(feature = "io-uring"))]
   discovery_updated_sender: mio_channel::SyncSender<DiscoveryNotificationType>,
   // Discovery gets commands from dp_event_loop from this channel
+  #[cfg(not(feature = "io-uring"))]
   discovery_command_receiver: mio_channel::Receiver<DiscoveryCommand>,
+  #[cfg(not(feature = "io-uring"))]
   spdp_liveness_receiver: mio_channel::Receiver<GuidPrefix>,
 
   liveliness_state: LivelinessState,
 
+  #[cfg(not(feature = "io-uring"))]
   participant_status_sender: StatusChannelSender<DomainParticipantStatusEvent>,
 
   // DDS Subscriber and Publisher for Discovery
@@ -224,6 +238,7 @@ pub(crate) struct Discovery {
   // and
   // timer to periodically announce our presence
   dcps_participant: with_key::DiscoveryTopicPlCdr<SpdpDiscoveredParticipantData>,
+  #[cfg(not(feature = "io-uring"))]
   participant_cleanup_timer: Timer<()>, // garbage collection timer for dead remote participants
 
   // Topic "DCPSSubscription" - announcing and detecting Readers
@@ -234,6 +249,7 @@ pub(crate) struct Discovery {
 
   // Topic "DCPSTopic" - announcing and detecting topics
   dcps_topic: with_key::DiscoveryTopicPlCdr<DiscoveredTopicData>,
+  #[cfg(not(feature = "io-uring"))]
   topic_cleanup_timer: Timer<()>,
 
   // DCPSParticipantMessage - used by participants to communicate liveness
@@ -273,8 +289,10 @@ pub(crate) struct Discovery {
   dcps_participant_volatile_message_secure:
     no_key::DiscoveryTopicCDR<ParticipantVolatileMessageSecure>, // CDR?
 
-  #[cfg(feature = "security")]
+  #[cfg(all(feature = "security", not(feature = "io-uring")))]
   cached_secure_discovery_messages_resend_timer: Timer<()>,
+  #[cfg(feature = "io-uring")]
+  pub publish_timer: Option<TimerFd>,
 }
 
 impl Discovery {
@@ -305,6 +323,7 @@ impl Discovery {
   };
 
   #[allow(clippy::too_many_arguments)]
+  #[cfg(not(feature = "io-uring"))]
   pub fn new(
     domain_participant: DomainParticipantWeak,
     discovery_db: Arc<RwLock<DiscoveryDB>>,
@@ -719,6 +738,7 @@ impl Discovery {
     })
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn discovery_event_loop(&mut self) {
     self.initialize_participant();
 
@@ -926,12 +946,365 @@ impl Discovery {
     } // loop
   } // fn
 
+  #[cfg(feature = "io-uring")]
+  pub fn setup_discovery(
+    domain_participant: &mut DomainParticipant,
+    discovery_db: Arc<RwLock<DiscoveryDB>>,
+    security_plugins_opt: Option<SecurityPluginsHandle>,
+  ) -> CreateResult<Self> {
+    // helper macro to handle initialization failures.
+
+    macro_rules! try_construct {
+      ($constructor:expr, $msg:literal) => {
+        match $constructor {
+          Ok(r) => r,
+          Err(e) => {
+            error!("{} {:?}", $msg, e);
+            return Err(CreateError::OutOfResources {
+              reason: $msg.to_string(),
+            });
+          }
+        }
+      };
+    }
+
+    let discovery_subscriber_qos = Self::subscriber_qos();
+    let discovery_publisher_qos = Self::publisher_qos();
+
+    // Create DDS Publisher and Subscriber for Discovery.
+    // These are needed to create DataWriter and DataReader objects
+    let discovery_subscriber = try_construct!(
+      domain_participant.create_subscriber(&discovery_subscriber_qos),
+      "Unable to create Discovery Subscriber."
+    );
+    let discovery_publisher = try_construct!(
+      domain_participant.create_publisher(&discovery_publisher_qos),
+      "Unable to create Discovery Publisher."
+    );
+
+    // TODO: timeout value is not used. Remove.
+    macro_rules! construct_topic_and_poll {
+      ( $repr:ident, $has_key:ident,
+        $topic_name:expr, $topic_type_name:expr, $message_type:ty,
+        $endpoint_qos_opt:expr,
+        $stateless_RTPS:expr,
+        $reader_entity_id:expr, $reader_token:expr,
+        $writer_entity_id:expr,
+        $timeout_and_timer_token_opt:expr, ) => {{
+        let endpoint_qos_opt_bind = $endpoint_qos_opt;
+        let topic_qos_ref = if let Some(qos) = endpoint_qos_opt_bind.as_ref() {
+          qos
+        } else {
+          &discovery_subscriber_qos
+        };
+
+        let publisher_qos: QosPolicies = if let Some(qos) = endpoint_qos_opt_bind.as_ref() {
+          qos.clone()
+        } else {
+          discovery_publisher_qos.clone()
+        };
+
+        let topic = domain_participant
+          .create_topic(
+            $topic_name.to_string(),
+            $topic_type_name.to_string(),
+            topic_qos_ref,
+            $has_key::TOPIC_KIND,
+          )
+          .expect("Unable to create topic. ");
+        paste! {
+          let (ing, reader) =
+            discovery_subscriber
+            . [< create_datareader_with_entity_id_ $has_key >]
+              ::<$message_type, [<$repr DeserializerAdapter>] <$message_type>>(
+              &topic,
+              $reader_entity_id,
+              $endpoint_qos_opt,
+              $stateless_RTPS,
+            ).expect("Unable to create DataReader. ");
+
+          domain_participant.add_local_reader(ing);
+
+          let (ing, writer) =
+              discovery_publisher.[< create_datawriter_with_entity_id_ $has_key >]
+                ::<$message_type, [<$repr SerializerAdapter>] <$message_type>>(
+                $writer_entity_id,
+                &topic,
+                Some(publisher_qos),
+                $stateless_RTPS,
+              ).expect("Unable to create DataWriter .");
+
+          domain_participant.add_local_writer(ing);
+        }
+
+        let mut timer: Timer<TimerPolicy> = new_simple_timer();
+        let timeout_and_timer_token_opt: Option<(StdDuration, mio_06::Token)> =
+          $timeout_and_timer_token_opt;
+        paste! { $has_key ::[<DiscoveryTopic $repr>] { topic, reader, writer, timer } }
+      }}; // macro
+    }
+
+    // Participant
+    let dcps_participant = construct_topic_and_poll!(
+      PlCdr,
+      with_key,
+      builtin_topic_names::DCPS_PARTICIPANT,
+      builtin_topic_type_names::DCPS_PARTICIPANT,
+      SpdpDiscoveredParticipantData,
+      Some(Self::create_spdp_participant_qos()),
+      false, // Regular stateful RTPS Reader & Writer
+      EntityId::SPDP_BUILTIN_PARTICIPANT_READER,
+      DISCOVERY_PARTICIPANT_DATA_TOKEN,
+      EntityId::SPDP_BUILTIN_PARTICIPANT_WRITER,
+      Some((
+        Self::SPDP_PUBLISH_PERIOD,
+        DISCOVERY_SEND_PARTICIPANT_INFO_TOKEN,
+      )),
+    );
+
+    // create lease duration check timer
+    let mut participant_cleanup_timer: Timer<()> = new_simple_timer();
+    participant_cleanup_timer.set_timeout(Self::PARTICIPANT_CLEANUP_PERIOD, ());
+
+    // Subscriptions: What are the Readers on the network and what are they
+    // subscribing to?
+    let dcps_subscription = construct_topic_and_poll!(
+      PlCdr,
+      with_key,
+      builtin_topic_names::DCPS_SUBSCRIPTION,
+      builtin_topic_type_names::DCPS_SUBSCRIPTION,
+      DiscoveredReaderData,
+      None,  // QoS
+      false, // Regular stateful RTPS Reader & Writer
+      EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_READER,
+      DISCOVERY_READER_DATA_TOKEN,
+      EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_WRITER,
+      None, // No timer
+    );
+
+    // Publication : Who are the Writers here and elsewhere
+    let dcps_publication = construct_topic_and_poll!(
+      PlCdr,
+      with_key,
+      builtin_topic_names::DCPS_PUBLICATION,
+      builtin_topic_type_names::DCPS_PUBLICATION,
+      DiscoveredWriterData,
+      None,  // QoS,
+      false, // Regular stateful RTPS Reader & Writer
+      EntityId::SEDP_BUILTIN_PUBLICATIONS_READER,
+      DISCOVERY_WRITER_DATA_TOKEN,
+      EntityId::SEDP_BUILTIN_PUBLICATIONS_WRITER,
+      None, // No timer
+    );
+
+    // Topic topic (not a typo)
+    let dcps_topic = construct_topic_and_poll!(
+      PlCdr,
+      with_key,
+      builtin_topic_names::DCPS_TOPIC,
+      builtin_topic_type_names::DCPS_TOPIC,
+      DiscoveredTopicData,
+      None,  // QoS,
+      false, // Regular stateful RTPS Reader & Writer
+      EntityId::SEDP_BUILTIN_TOPIC_READER,
+      DISCOVERY_TOPIC_DATA_TOKEN,
+      EntityId::SEDP_BUILTIN_TOPIC_WRITER,
+      None, // No timer
+    );
+
+    // create lease duration check timer
+    let mut topic_cleanup_timer: Timer<()> = new_simple_timer();
+    topic_cleanup_timer.set_timeout(Self::TOPIC_CLEANUP_PERIOD, ());
+
+    // Participant Message Data 8.4.13
+    let dcps_participant_message = construct_topic_and_poll!(
+      CDR,
+      with_key,
+      builtin_topic_names::DCPS_PARTICIPANT_MESSAGE,
+      builtin_topic_type_names::DCPS_PARTICIPANT_MESSAGE,
+      ParticipantMessageData,
+      Some(Self::PARTICIPANT_MESSAGE_QOS),
+      false, // Regular stateful RTPS Reader & Writer
+      EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_READER,
+      DISCOVERY_PARTICIPANT_MESSAGE_TOKEN,
+      EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER,
+      Some((
+        Self::CHECK_PARTICIPANT_MESSAGES,
+        DISCOVERY_PARTICIPANT_MESSAGE_TIMER_TOKEN,
+      )),
+    );
+
+    // DDS Security
+
+    // Participant
+    #[cfg(feature = "security")]
+    let dcps_participant_secure = construct_topic_and_poll!(
+      PlCdr,
+      with_key,
+      builtin_topic_names::DCPS_PARTICIPANT_SECURE,
+      builtin_topic_type_names::DCPS_PARTICIPANT_SECURE,
+      ParticipantBuiltinTopicDataSecure,
+      None,  // QoS
+      false, // Regular stateful RTPS Reader & Writer
+      EntityId::SPDP_RELIABLE_BUILTIN_PARTICIPANT_SECURE_READER,
+      SECURE_DISCOVERY_PARTICIPANT_DATA_TOKEN,
+      EntityId::SPDP_RELIABLE_BUILTIN_PARTICIPANT_SECURE_WRITER,
+      None, // No timer. Periodic sending is done simultaneously with the non-secure topic
+    );
+
+    // Subscriptions: What are the Readers on the network and what are they
+    // subscribing to?
+    #[cfg(feature = "security")]
+    let dcps_subscriptions_secure = construct_topic_and_poll!(
+      PlCdr,
+      with_key,
+      builtin_topic_names::DCPS_SUBSCRIPTIONS_SECURE,
+      builtin_topic_type_names::DCPS_SUBSCRIPTIONS_SECURE,
+      SubscriptionBuiltinTopicDataSecure,
+      None,  // QoS
+      false, // Regular stateful RTPS Reader & Writer
+      EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_SECURE_READER,
+      SECURE_DISCOVERY_READER_DATA_TOKEN,
+      EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_SECURE_WRITER,
+      None, // No timer
+    );
+
+    // Publication : Who are the Writers here and elsewhere
+    #[cfg(feature = "security")]
+    let dcps_publications_secure = construct_topic_and_poll!(
+      PlCdr,
+      with_key,
+      builtin_topic_names::DCPS_PUBLICATIONS_SECURE,
+      builtin_topic_type_names::DCPS_PUBLICATIONS_SECURE,
+      PublicationBuiltinTopicDataSecure,
+      None,  // QoS
+      false, // Regular stateful RTPS Reader & Writer
+      EntityId::SEDP_BUILTIN_PUBLICATIONS_SECURE_READER,
+      SECURE_DISCOVERY_WRITER_DATA_TOKEN,
+      EntityId::SEDP_BUILTIN_PUBLICATIONS_SECURE_WRITER,
+      None, // No timer
+    );
+
+    // p2p Participant message secure
+    #[cfg(feature = "security")]
+    let dcps_participant_message_secure = construct_topic_and_poll!(
+      CDR,
+      with_key,
+      builtin_topic_names::DCPS_PARTICIPANT_MESSAGE_SECURE,
+      builtin_topic_type_names::DCPS_PARTICIPANT_MESSAGE_SECURE,
+      ParticipantMessageData, // actually reuse the non-secure data type
+      None,                   // QoS
+      false,                  // Regular stateful RTPS Reader & Writer
+      EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_SECURE_READER,
+      P2P_SECURE_DISCOVERY_PARTICIPANT_MESSAGE_TOKEN,
+      EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_SECURE_WRITER,
+      None, // No timer. Periodic sending is done simultaneously with the non-secure topic
+    );
+    // p2p Participant stateless message, used for authentication and Diffie-Hellman
+    // key exchange
+    #[cfg(feature = "security")]
+    let dcps_participant_stateless_message = construct_topic_and_poll!(
+      CDR,
+      no_key,
+      builtin_topic_names::DCPS_PARTICIPANT_STATELESS_MESSAGE,
+      builtin_topic_type_names::DCPS_PARTICIPANT_STATELESS_MESSAGE,
+      ParticipantStatelessMessage,
+      Some(Self::create_participant_stateless_message_qos()),
+      true, // Important: STATELESS RTPS Reader & Writer (see Security spec. section 7.4.3)
+      EntityId::P2P_BUILTIN_PARTICIPANT_STATELESS_READER,
+      P2P_PARTICIPANT_STATELESS_MESSAGE_TOKEN,
+      EntityId::P2P_BUILTIN_PARTICIPANT_STATELESS_WRITER,
+      None, // No timer
+    );
+
+    // p2p Participant volatile message secure, used for key exchange
+    // Used for distributing symmetric (AES) crypto keys
+    #[cfg(feature = "security")]
+    let dcps_participant_volatile_message_secure = construct_topic_and_poll!(
+      CDR,
+      no_key,
+      builtin_topic_names::DCPS_PARTICIPANT_VOLATILE_MESSAGE_SECURE,
+      builtin_topic_type_names::DCPS_PARTICIPANT_VOLATILE_MESSAGE_SECURE,
+      ParticipantVolatileMessageSecure,
+      Some(Self::create_participant_volatile_message_secure_qos()),
+      false, // Regular stateful RTPS Reader & Writer
+      EntityId::P2P_BUILTIN_PARTICIPANT_VOLATILE_SECURE_READER,
+      P2P_BUILTIN_PARTICIPANT_VOLATILE_SECURE_TOKEN,
+      EntityId::P2P_BUILTIN_PARTICIPANT_VOLATILE_SECURE_WRITER,
+      None, // No timer.
+    );
+
+    // Create a timer to periodically check whether to resend any cached security
+    // (authentication, key exchange) messages
+    #[cfg(feature = "security")]
+    let secure_message_resend_timer = {
+      let mut secure_message_resend_timer: Timer<()> = new_simple_timer();
+      secure_message_resend_timer
+        .set_timeout(Self::CACHED_SECURE_DISCOVERY_MESSAGE_RESEND_PERIOD, ());
+      try_construct!(
+        poll.register(
+          &secure_message_resend_timer,
+          CACHED_SECURE_DISCOVERY_MESSAGE_RESEND_TIMER_TOKEN,
+          Ready::readable(),
+          PollOpt::edge(),
+        ),
+        "Unable to create secure message resend timer."
+      );
+      secure_message_resend_timer
+    };
+
+    #[cfg(not(feature = "security"))]
+    let security_opt = security_plugins_opt.and(None); // = None, but avoid warning.
+
+    #[cfg(feature = "security")]
+    let security_opt = if let Some(plugins_handle) = security_plugins_opt {
+      // Plugins is Some so security is enabled. Initialize SecureDiscovery
+      let security = try_construct!(
+        SecureDiscovery::new(&domain_participant, &discovery_db, plugins_handle),
+        "Could not initialize Secure Discovery."
+      );
+      Some(security)
+    } else {
+      None // no security configured
+    };
+
+
+    let this = Self {
+      discovery_db: discovery_db.clone(),
+      liveliness_state: LivelinessState::new(),
+      dcps_participant,
+      dcps_subscription,
+      dcps_publication, // SEDP
+      dcps_topic,
+      dcps_participant_message, // liveliness messages
+
+      security_opt,
+      #[cfg(feature = "security")]
+      dcps_participant_secure,
+      #[cfg(feature = "security")]
+      dcps_publications_secure,
+      #[cfg(feature = "security")]
+      dcps_subscriptions_secure,
+      #[cfg(feature = "security")]
+      dcps_participant_message_secure,
+      #[cfg(feature = "security")]
+      dcps_participant_stateless_message,
+      #[cfg(feature = "security")]
+      dcps_participant_volatile_message_secure,
+      publish_timer: None,
+    };
+
+    this.initialize(domain_participant);
+    Ok(this)
+  }
+
   // Initialize our own participant data into the Discovery DB.
   // That causes ReaderProxies and WriterProxies to be constructed and
   // and we also get our own local readers and writers connected, both
   // built-in and user-defined.
   // If we did not do this, the Readers and Writers in this participant could not
   // find each other.
+  #[cfg(not(feature = "io-uring"))]
   fn initialize_participant(&self) {
     let dp = if let Some(dp) = self.domain_participant.clone().upgrade() {
       dp
@@ -957,6 +1330,28 @@ impl Discovery {
     });
   }
 
+  #[cfg(feature = "io-uring")]
+  fn initialize(&self, participant: &mut DomainParticipant) {
+      self.initialize_participant(participant);
+    self.sedp_publish_writers(participant);
+    self.sedp_publish_readers(participant);
+  }
+
+  #[cfg(feature = "io-uring")]
+  fn initialize_participant(&self, participant: &mut DomainParticipant) {
+    let participant_data = SpdpDiscoveredParticipantData::from_local_participant(
+      &participant,
+      &self.security_opt,
+      Duration::INFINITE,
+    );
+
+    // Initialize our own participant data into the Discovery DB, so we can talk to
+    // ourself.
+    discovery_db_write(&self.discovery_db).update_participant(&participant_data);
+  }
+
+
+  #[cfg(not(feature = "io-uring"))]
   pub fn spdp_receive(&mut self) {
     loop {
       let s = self.dcps_participant.reader.take_next_sample();
@@ -1007,6 +1402,7 @@ impl Discovery {
     } // loop
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn process_discovered_participant_data(
     &mut self,
     participant_data: &SpdpDiscoveredParticipantData,
@@ -1047,6 +1443,7 @@ impl Discovery {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn process_participant_dispose(&mut self, participant_guidp: GuidPrefix) {
     discovery_db_write(&self.discovery_db).remove_participant(participant_guidp, true); // true = actively removed
     self.send_discovery_notification(DiscoveryNotificationType::ParticipantLost {
@@ -1058,6 +1455,7 @@ impl Discovery {
     });
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn send_endpoint_dispose_message(&self, endpoint_guid: GUID) {
     let is_writer = endpoint_guid.entity_id.entity_kind.is_writer();
     if is_writer {
@@ -1088,6 +1486,7 @@ impl Discovery {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn on_participant_shutting_down(&mut self) {
     let db = discovery_db_read(&self.discovery_db);
 
@@ -1113,6 +1512,7 @@ impl Discovery {
   }
 
   // Check if there are messages about new Readers
+  #[cfg(not(feature = "io-uring"))]
   pub fn sedp_receive_subscription(&mut self, read_history: Option<GuidPrefix>) {
     let drds: Vec<Sample<DiscoveredReaderData, GUID>> =
       match self.dcps_subscription.reader.into_iterator() {
@@ -1182,6 +1582,7 @@ impl Discovery {
     } // loop
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn sedp_receive_publication(&mut self, read_history: Option<GuidPrefix>) {
     let dwds: Vec<Sample<DiscoveredWriterData, GUID>> =
       match self.dcps_publication.reader.into_iterator() {
@@ -1253,6 +1654,7 @@ impl Discovery {
   // Likely it is something to do with an unreliable network and
   // DomainParticipants timing out and then coming back. The read_history was
   // supposed to help in recovering from that.
+  #[cfg(not(feature = "io-uring"))]
   pub fn sedp_receive_topic_data(&mut self, _read_history: Option<GuidPrefix>) {
     let ts: Vec<Sample<(DiscoveredTopicData, GUID), GUID>> = match self
       .dcps_topic
@@ -1334,6 +1736,7 @@ impl Discovery {
   // These messages are for updating participant liveliness
   // The protocol distinguishes between automatic (by DDS library)
   // and manual (by by application, via DDS API call) liveness
+  #[cfg(not(feature = "io-uring"))]
   pub fn receive_participant_message(&mut self) {
     // First read from nonsecure reader
     let mut samples = match self
@@ -1376,7 +1779,7 @@ impl Discovery {
     }
   }
 
-  fn spdp_publish(&self, local_dp: &DomainParticipant) {
+  pub fn spdp_publish(&self, local_dp: &mut DomainParticipant) {
     // setting 5 times the duration so lease doesn't break if update fails once or
     // twice
     let data = SpdpDiscoveredParticipantData::from_local_participant(
@@ -1390,15 +1793,32 @@ impl Discovery {
       security.secure_spdp_publish(&self.dcps_participant_secure.writer, data.clone());
     }
 
-    self
+
+
+    let cmd = match self
       .dcps_participant
       .writer
-      .write(data, None)
-      .unwrap_or_else(|e| {
-        error!("Discovery: Publishing to DCPS participant topic failed: {e:?}");
-      });
+      .write(data, None) {
+          Ok(cmd) => cmd,
+          Err(e) => {
+            error!("Discovery: Publishing to DCPS participant topic failed: {e:?}");
+              return
+          }
+      };
+
+    //TODO: it looks like smth to do with not claling [remote_reader_discovered]
+    //or remote_wrtier_discovered idk.
+
+    let mut guard = local_dp.dpi.lock().unwrap();
+
+    let w = guard.dpi.ev_loop.writer_mut(&EntityId::SPDP_BUILTIN_PARTICIPANT_WRITER).unwrap();
+
+    println!("sending cmd");
+
+    w.process_writer_command(cmd);
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn publish_participant_message(&mut self) {
     // Inspect if we need to send liveness messages
     // See 8.4.13.5 "Implementing Writer Liveliness Protocol .." in the RPTS spec
@@ -1718,6 +2138,7 @@ impl Discovery {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn participant_cleanup(&self) {
     let removed = discovery_db_write(&self.discovery_db).participant_cleanup();
     for (guid_prefix, reason) in removed {
@@ -1734,6 +2155,7 @@ impl Discovery {
     discovery_db_write(&self.discovery_db).topic_cleanup();
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn sedp_publish_single_reader(&self, guid: GUID) {
     let db = discovery_db_read(&self.discovery_db);
     if let Some(reader_data) = db.get_local_topic_reader(guid) {
@@ -1792,6 +2214,71 @@ impl Discovery {
     }
   }
 
+  #[cfg(feature = "io-uring")]
+  pub fn sedp_publish_single_reader(&self, guid: GUID, participant: &mut DomainParticipant) {
+    let db = discovery_db_read(&self.discovery_db);
+    if let Some(reader_data) = db.get_local_topic_reader(guid) {
+      if !reader_data
+        .reader_proxy
+        .remote_reader_guid
+        .entity_id
+        .kind()
+        .is_user_defined()
+      {
+        // Only readers of user-defined topics are published to discovery
+        return;
+      }
+
+      #[cfg(not(feature = "security"))]
+      let do_nonsecure_write = true;
+
+      #[cfg(feature = "security")]
+      let do_nonsecure_write = if let Some(security) = self.security_opt.as_ref() {
+        security.sedp_publish_single_reader(
+          &self.dcps_subscription.writer,
+          &self.dcps_subscriptions_secure.writer,
+          reader_data,
+        );
+        false
+      } else {
+        true // No security configured
+      };
+
+      if do_nonsecure_write {
+        match self
+          .dcps_subscription
+          .writer
+          .write(reader_data.clone(), None)
+        {
+          Ok(cmd) => {
+            let mut guard = participant.dpi.lock().unwrap();
+            let w = guard.dpi.ev_loop.writer_mut(&EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_WRITER).unwrap();
+            w.process_writer_command(cmd);
+
+            debug!(
+              "Published DCPSSubscription data on topic {}, reader guid {:?}, data {:?}",
+              reader_data.subscription_topic_data.topic_name(),
+              guid,
+              reader_data,
+            );
+          }
+          Err(e) => {
+            error!(
+              "Failed to publish DCPSSubscription data on topic {}, reader guid {:?}. Error: {e}",
+              reader_data.subscription_topic_data.topic_name(),
+              guid
+            );
+            // TODO: try again later?
+          }
+        }
+      }
+    } else {
+      warn!("Did not find a local reader {guid:?}");
+    }
+  }
+
+
+  #[cfg(not(feature = "io-uring"))]
   pub fn sedp_publish_readers(&self) {
     let db = discovery_db_read(&self.discovery_db);
     let local_user_reader_guids = db
@@ -1810,6 +2297,26 @@ impl Discovery {
     }
   }
 
+  #[cfg(feature = "io-uring")]
+  pub fn sedp_publish_readers(&self, participant: &mut DomainParticipant) {
+    let db = discovery_db_read(&self.discovery_db);
+    let local_user_reader_guids = db
+      .get_all_local_topic_readers()
+      .filter(|p| {
+        p.reader_proxy
+          .remote_reader_guid
+          .entity_id
+          .kind()
+          .is_user_defined()
+      })
+      .map(|drd| drd.reader_proxy.remote_reader_guid);
+
+    for guid in local_user_reader_guids {
+      self.sedp_publish_single_reader(guid, participant);
+    }
+  }
+
+  #[cfg(not(feature = "io-uring"))]
   pub fn sedp_publish_single_writer(&self, guid: GUID) {
     let db = discovery_db_read(&self.discovery_db);
     if let Some(writer_data) = db.get_local_topic_writer(guid) {
@@ -1867,6 +2374,73 @@ impl Discovery {
     }
   }
 
+  #[cfg(feature = "io-uring")]
+  pub fn sedp_publish_single_writer(&self, guid: GUID, participant: &DomainParticipant) {
+    let db = discovery_db_read(&self.discovery_db);
+    if let Some(writer_data) = db.get_local_topic_writer(guid) {
+      if !writer_data
+        .writer_proxy
+        .remote_writer_guid
+        .entity_id
+        .kind()
+        .is_user_defined()
+      {
+        // Only writers of user-defined topics are published to discovery
+        return;
+      }
+
+      #[cfg(not(feature = "security"))]
+      let do_nonsecure_write = true;
+
+      #[cfg(feature = "security")]
+      let do_nonsecure_write = if let Some(security) = self.security_opt.as_ref() {
+        security.sedp_publish_single_writer(
+          &self.dcps_publication.writer,
+          &self.dcps_publications_secure.writer,
+          writer_data,
+        );
+        false
+      } else {
+        true // No security configured
+      };
+
+      if do_nonsecure_write {
+        match self
+          .dcps_publication
+          .writer
+          .write(writer_data.clone(), None)
+        {
+          Ok(cmd) => {
+            let mut guard = participant.dpi.lock().unwrap();
+            let w = guard.dpi.ev_loop.writer_mut(&EntityId::SEDP_BUILTIN_PUBLICATIONS_WRITER).unwrap();
+            w.process_writer_command(cmd);
+
+
+
+
+
+            debug!(
+              "Published DCPSPublication data on topic {}, writer guid {:?}",
+              writer_data.publication_topic_data.topic_name(),
+              guid
+            );
+          }
+          Err(e) => {
+            error!(
+              "Failed to publish DCPSPublication data on topic {}, writer guid {:?}. Error: {e}",
+              writer_data.publication_topic_data.topic_name(),
+              guid
+            );
+            // TODO: try again later?
+          }
+        }
+      }
+    } else {
+      warn!("Did not find a local writer {guid:?}");
+    }
+  }
+
+  #[cfg(not(feature = "io-uring"))]
   pub fn sedp_publish_writers(&self) {
     let db: std::sync::RwLockReadGuard<'_, DiscoveryDB> = discovery_db_read(&self.discovery_db);
     let local_user_writer_guids = db
@@ -1885,6 +2459,27 @@ impl Discovery {
     }
   }
 
+  #[cfg(feature = "io-uring")]
+  pub fn sedp_publish_writers(&self, participant: &mut DomainParticipant) {
+    let db: std::sync::RwLockReadGuard<'_, DiscoveryDB> = discovery_db_read(&self.discovery_db);
+    let local_user_writer_guids = db
+      .get_all_local_topic_writers()
+      .filter(|p| {
+        p.writer_proxy
+          .remote_writer_guid
+          .entity_id
+          .kind()
+          .is_user_defined()
+      })
+      .map(|drd| drd.writer_proxy.remote_writer_guid);
+
+    for guid in local_user_writer_guids {
+      self.sedp_publish_single_writer(guid, participant);
+    }
+  }
+
+
+  #[cfg(not(feature = "io-uring"))]
   pub fn sedp_publish_topic(&self, topic_name: &str) {
     let db = discovery_db_read(&self.discovery_db);
     // We might have multiple topics with the same name (but different Qos etc..),
@@ -1906,6 +2501,47 @@ impl Discovery {
 
     match self.dcps_topic.writer.write(topic_data.clone(), None) {
       Ok(()) => {
+        debug!("Published topic {topic_name} to DCPSTopic");
+      }
+      Err(e) => {
+        error!("Failed to publish topic {topic_name} to DCPSTopic: {e}");
+        // TODO: try again later?
+      }
+    }
+  }
+
+  #[cfg(feature = "io-uring")]
+  pub fn sedp_publish_topic(&self, topic: &Topic, ev_loop: &mut DPEventLoop) {
+    let db = discovery_db_read(&self.discovery_db);
+    // We might have multiple topics with the same name (but different Qos etc..),
+    // and the following call gets just one of them. Should we publish all of
+    // them or is this enough?
+
+    use crate::dds::topic::TopicDescription;
+    let topic_name = topic.name();
+    let topic_data = match db.get_topic(&topic_name) {
+      Some(data) => data,
+      None => {
+        warn!("Did not find topic data with topic name {topic_name}");
+        return;
+      }
+    };
+
+    // Only user-defined topics are published to discovery
+    let is_user_defined = !topic_data.topic_name().starts_with("DCPS");
+    if !is_user_defined {
+      return;
+    }
+
+    match self.dcps_topic.writer.write(topic_data.clone(), None) {
+      Ok(cmd) => {
+        let w = ev_loop.writer_mut(&EntityId::SPDP_BUILTIN_PARTICIPANT_WRITER).unwrap();
+
+        println!("sending cmd");
+
+        w.process_writer_command(cmd);
+
+
         debug!("Published topic {topic_name} to DCPSTopic");
       }
       Err(e) => {
@@ -2025,6 +2661,7 @@ impl Discovery {
       .build()
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn send_discovery_notification(&self, dntype: DiscoveryNotificationType) {
     match self.discovery_updated_sender.send(dntype) {
       Ok(_) => (),
@@ -2032,12 +2669,36 @@ impl Discovery {
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn send_participant_status(&self, event: DomainParticipantStatusEvent) {
     self
       .participant_status_sender
       .try_send(event)
       .unwrap_or_else(|e| error!("Cannot report participant status: {e:?}"));
   }
+}
+
+#[cfg(feature = "io-uring")]
+impl crate::network::util::Register for Discovery {
+    fn register_io_uring(&mut self, ring: &mut IoUring, udata: u64, idx: &mut u16) -> std::io::Result<()> {
+        let mut tfd = TimerFd::new_custom(ClockId::Monotonic, true, false).unwrap();
+
+        tfd.set_state(TimerState::Periodic{ current: StdDuration::from_millis(1), interval: StdDuration::from_millis(1000)}, SetTimeFlags::Default);
+
+        use std::os::fd::AsRawFd;
+        let fd = tfd.as_raw_fd();
+
+        let op = PollAdd::new(Fd(fd), libc::POLLIN as _).multi(true).build().user_data(udata);
+
+        self.publish_timer = Some(tfd);
+
+        unsafe {
+          ring.submission().push(&op).unwrap();
+        }
+
+        ring.submitter().submit()?;
+        Ok(())
+    }
 }
 
 // -----------------------------------------------------------------------

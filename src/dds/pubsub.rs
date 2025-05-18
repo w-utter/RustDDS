@@ -93,6 +93,7 @@ pub struct Publisher {
 
 impl Publisher {
   #[allow(clippy::too_many_arguments)]
+  #[cfg(not(feature = "io-uring"))]
   pub(super) fn new(
     dp: DomainParticipantWeak,
     discovery_db: Arc<RwLock<DiscoveryDB>>,
@@ -112,6 +113,24 @@ impl Publisher {
         add_writer_sender,
         remove_writer_sender,
         discovery_command,
+        security_plugins_handle,
+      ))),
+    }
+  }
+  #[cfg(feature = "io-uring")]
+  pub(super) fn new(
+    dp: DomainParticipantWeak,
+    discovery_db: Arc<RwLock<DiscoveryDB>>,
+    qos: QosPolicies,
+    default_dw_qos: QosPolicies,
+    security_plugins_handle: Option<SecurityPluginsHandle>,
+  ) -> Self {
+    Self {
+      inner: Arc::new(Mutex::new(InnerPublisher::new(
+        dp,
+        discovery_db,
+        qos,
+        default_dw_qos,
         security_plugins_handle,
       ))),
     }
@@ -161,7 +180,7 @@ impl Publisher {
     &self,
     topic: &Topic,
     qos: Option<QosPolicies>,
-  ) -> CreateResult<WithKeyDataWriter<D, SA>>
+  ) -> CreateResult<(WriterIngredients, WithKeyDataWriter<D, SA>)>
   where
     D: Keyed,
     SA: adapters::with_key::SerializerAdapter<D>,
@@ -177,7 +196,7 @@ impl Publisher {
     &self,
     topic: &Topic,
     qos: Option<QosPolicies>,
-  ) -> CreateResult<WithKeyDataWriter<D, CDRSerializerAdapter<D, LittleEndian>>>
+  ) -> CreateResult<(WriterIngredients, WithKeyDataWriter<D, CDRSerializerAdapter<D, LittleEndian>>)>
   where
     D: Keyed + serde::Serialize,
     <D as Keyed>::K: Serialize,
@@ -215,7 +234,7 @@ impl Publisher {
     &self,
     topic: &Topic,
     qos: Option<QosPolicies>,
-  ) -> CreateResult<NoKeyDataWriter<D, SA>>
+  ) -> CreateResult<(WriterIngredients, NoKeyDataWriter<D, SA>)>
   where
     SA: adapters::no_key::SerializerAdapter<D>,
   {
@@ -228,7 +247,7 @@ impl Publisher {
     &self,
     topic: &Topic,
     qos: Option<QosPolicies>,
-  ) -> CreateResult<NoKeyDataWriter<D, CDRSerializerAdapter<D, LittleEndian>>>
+  ) -> CreateResult<(WriterIngredients, NoKeyDataWriter<D, CDRSerializerAdapter<D, LittleEndian>>)>
   where
     D: serde::Serialize,
   {
@@ -243,7 +262,7 @@ impl Publisher {
     topic: &Topic,
     qos: Option<QosPolicies>,
     writer_like_stateless: bool, // Create a stateless-like RTPS writer?
-  ) -> CreateResult<WithKeyDataWriter<D, SA>>
+  ) -> CreateResult<(WriterIngredients, WithKeyDataWriter<D, SA>)>
   where
     D: Keyed,
     SA: adapters::with_key::SerializerAdapter<D>,
@@ -378,6 +397,7 @@ impl Publisher {
   }
 
   // This is used on DataWriter .drop()
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) fn remove_writer(&self, guid: GUID) {
     self.inner_lock().remove_writer(guid);
   }
@@ -406,8 +426,11 @@ struct InnerPublisher {
   discovery_db: Arc<RwLock<DiscoveryDB>>,
   my_qos_policies: QosPolicies,
   default_datawriter_qos: QosPolicies, // used when creating a new DataWriter
+  #[cfg(not(feature = "io-uring"))]
   add_writer_sender: mio_channel::SyncSender<WriterIngredients>,
+  #[cfg(not(feature = "io-uring"))]
   remove_writer_sender: mio_channel::SyncSender<GUID>,
+  #[cfg(not(feature = "io-uring"))]
   discovery_command: mio_channel::SyncSender<DiscoveryCommand>,
   security_plugins_handle: Option<SecurityPluginsHandle>,
 }
@@ -415,6 +438,7 @@ struct InnerPublisher {
 // public interface for Publisher
 impl InnerPublisher {
   #[allow(clippy::too_many_arguments)]
+  #[cfg(not(feature = "io-uring"))]
   fn new(
     dp: DomainParticipantWeak,
     discovery_db: Arc<RwLock<DiscoveryDB>>,
@@ -443,6 +467,30 @@ impl InnerPublisher {
     }
   }
 
+  #[cfg(feature = "io-uring")]
+  fn new(
+    dp: DomainParticipantWeak,
+    discovery_db: Arc<RwLock<DiscoveryDB>>,
+    qos: QosPolicies,
+    default_dw_qos: QosPolicies,
+    security_plugins_handle: Option<SecurityPluginsHandle>,
+  ) -> Self {
+    // We generate an arbitrary but unique id to distinguish Publishers from each
+    // other. EntityKind is just some value, since we do not show it to anyone.
+    let id = EntityId::MAX;
+    // dp.clone().upgrade().unwrap().new_entity_id(EntityKind::UNKNOWN_BUILT_IN);
+
+    Self {
+      id,
+      domain_participant: dp,
+      discovery_db,
+      my_qos_policies: qos,
+      default_datawriter_qos: default_dw_qos,
+      security_plugins_handle,
+    }
+  }
+
+  #[cfg(not(feature = "io-uring"))]
   pub fn create_datawriter<D, SA>(
     &self,
     outer: &Publisher,
@@ -628,6 +676,157 @@ impl InnerPublisher {
     Ok(data_writer)
   }
 
+  #[cfg(feature = "io-uring")]
+  pub fn create_datawriter<D, SA>(
+    &self,
+    outer: &Publisher,
+    entity_id_opt: Option<EntityId>,
+    topic: &Topic,
+    optional_qos: Option<QosPolicies>,
+    writer_like_stateless: bool, // Create a stateless-like RTPS writer? Usually false
+  ) -> CreateResult<(WriterIngredients, WithKeyDataWriter<D, SA>)>
+  where
+    D: Keyed,
+    SA: adapters::with_key::SerializerAdapter<D>,
+  {
+    // DDS Spec 2.2.2.4.1.5 create_datawriter:
+    // If no QoS is specified, we should take the Publisher default
+    // QoS, modify it to match any QoS settings (that are set) in the
+    // Topic QoS and use that.
+
+    // Use Publisher QoS as basis, modify by Topic settings, and modify by specified
+    // QoS.
+    let writer_qos = self
+      .default_datawriter_qos
+      .modify_by(&topic.qos())
+      .modify_by(&optional_qos.unwrap_or_else(QosPolicies::qos_none));
+
+    let entity_id =
+      self.unwrap_or_new_entity_id(entity_id_opt, EntityKind::WRITER_WITH_KEY_USER_DEFINED);
+    let dp = self
+      .participant()
+      .ok_or("upgrade fail")
+      .or_else(|e| create_error_dropped!("Where is my DomainParticipant? {}", e))?;
+
+    let guid = GUID::new_with_prefix_and_id(dp.guid().prefix, entity_id);
+
+    #[cfg(feature = "security")]
+    if let Some(sec_handle) = self.security_plugins_handle.as_ref() {
+      // Security is enabled.
+      // Check are we allowed to create the DataWriter from Access control
+      let check_res = sec_handle.get_plugins().check_create_datawriter(
+        guid.prefix,
+        dp.domain_id(),
+        topic.name(),
+        &writer_qos,
+      );
+      match check_res {
+        Ok(check_passed) => {
+          if !check_passed {
+            return create_error_not_allowed_by_security!(
+              "Not allowed to create a DataWriter to topic {}",
+              topic.name()
+            );
+          }
+        }
+        Err(e) => {
+          // Something went wrong in the check
+          return create_error_internal!(
+            "Failed to check DataWriter rights from Access control: {}",
+            e.msg
+          );
+        }
+      };
+
+      // Register Writer to crypto plugin
+      if let Err(e) = {
+        let writer_security_attributes = sec_handle
+          .get_plugins()
+          .get_writer_sec_attributes(guid, topic.name()); // Release lock
+        writer_security_attributes.and_then(|attributes| {
+          sec_handle
+            .get_plugins()
+            .register_local_writer(guid, writer_qos.property(), attributes)
+        })
+      } {
+        return create_error_internal!(
+          "Failed to register writer to crypto plugin: {} . GUID: {:?}",
+          e,
+          guid
+        );
+      } else {
+        info!("Registered local writer to crypto plugin. GUID: {:?}", guid);
+      }
+    }
+
+    let new_writer = WriterIngredients {
+      guid,
+      topic_name: topic.name(),
+      like_stateless: writer_like_stateless,
+      qos_policies: writer_qos.clone(),
+      security_plugins: self.security_plugins_handle.clone(),
+    };
+
+    let data_writer =
+      WithKeyDataWriter::<D, SA>::new(outer.clone(), topic.clone(), writer_qos, guid)?;
+
+    // notify Discovery DB
+    let mut db = self
+      .discovery_db
+      .write()
+      .map_err(|e| CreateError::Poisoned {
+        reason: format!("Discovery DB: {e}"),
+      })?;
+
+    #[cfg(not(feature = "security"))]
+    let security_info = None;
+    #[cfg(feature = "security")]
+    let security_info = if let Some(sec_handle) = self.security_plugins_handle.as_ref() {
+      // Security enabled
+      if guid.entity_id.entity_kind.is_user_defined() {
+        match sec_handle
+          .get_plugins()
+          .get_writer_sec_attributes(guid, topic.name())
+        {
+          Ok(attr) => EndpointSecurityInfo::from(attr).into(),
+          Err(e) => {
+            return create_error_internal!(
+              "Failed to get security info for writer: {}. Guid: {:?}",
+              e,
+              guid
+            );
+          }
+        }
+      } else {
+        None // For the built-in topics
+      }
+    } else {
+      // No security enabled
+      None
+    };
+
+    // Update topic to DiscoveryDB & inform Discovery about it
+    let dwd = DiscoveredWriterData::new(&data_writer, topic, &dp, security_info);
+    db.update_local_topic_writer(dwd);
+    db.update_topic_data_p(topic);
+
+    // Inform Discovery about the new writer
+    let writer_guid = self.domain_participant.guid().from_prefix(entity_id);
+
+    let mut guard = dp.dpi.lock().unwrap();
+    let inner = &mut guard.dpi;
+
+    let ev_loop = &mut inner.ev_loop;
+    let discovery = &inner.discovery;
+
+    if let Some(disc) = discovery {
+        disc.sedp_publish_topic(topic, ev_loop)
+    }
+
+    // Return the DataWriter to user
+    Ok((new_writer, data_writer))
+  }
+
   pub fn create_datawriter_no_key<D, SA>(
     &self,
     outer: &Publisher,
@@ -635,20 +834,20 @@ impl InnerPublisher {
     topic: &Topic,
     qos: Option<QosPolicies>,
     writer_like_stateless: bool, // Create a stateless-like RTPS writer? Usually false
-  ) -> CreateResult<NoKeyDataWriter<D, SA>>
+  ) -> CreateResult<(WriterIngredients, NoKeyDataWriter<D, SA>)>
   where
     SA: adapters::no_key::SerializerAdapter<D>,
   {
     let entity_id =
       self.unwrap_or_new_entity_id(entity_id_opt, EntityKind::WRITER_NO_KEY_USER_DEFINED);
-    let d = self.create_datawriter::<NoKeyWrapper<D>, SAWrapper<SA>>(
+    let (ing, d) = self.create_datawriter::<NoKeyWrapper<D>, SAWrapper<SA>>(
       outer,
       Some(entity_id),
       topic,
       qos,
       writer_like_stateless,
     )?;
-    Ok(NoKeyDataWriter::<D, SA>::from_keyed(d))
+    Ok((ing, NoKeyDataWriter::<D, SA>::from_keyed(d)))
   }
 
   pub fn participant(&self) -> Option<DomainParticipant> {
@@ -673,6 +872,7 @@ impl InnerPublisher {
     entity_id_opt.unwrap_or_else(|| self.participant().unwrap().new_entity_id(entity_kind))
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) fn remove_writer(&self, guid: GUID) {
     try_send_timeout(&self.remove_writer_sender, guid, None)
       .unwrap_or_else(|e| error!("Cannot remove Writer {:?} : {:?}", guid, e));
@@ -725,6 +925,7 @@ pub struct Subscriber {
 }
 
 impl Subscriber {
+  #[cfg(not(feature = "io-uring"))]
   pub(super) fn new(
     domain_participant: DomainParticipantWeak,
     discovery_db: Arc<RwLock<DiscoveryDB>>,
@@ -742,6 +943,23 @@ impl Subscriber {
         sender_add_reader,
         sender_remove_reader,
         discovery_command,
+        security_plugins_handle,
+      )),
+    }
+  }
+
+  #[cfg(feature = "io-uring")]
+  pub(super) fn new(
+    domain_participant: DomainParticipantWeak,
+    discovery_db: Arc<RwLock<DiscoveryDB>>,
+    qos: QosPolicies,
+    security_plugins_handle: Option<SecurityPluginsHandle>,
+  ) -> Self {
+    Self {
+      inner: Arc::new(InnerSubscriber::new(
+        domain_participant,
+        discovery_db,
+        qos,
         security_plugins_handle,
       )),
     }
@@ -787,7 +1005,7 @@ impl Subscriber {
     &self,
     topic: &Topic,
     qos: Option<QosPolicies>,
-  ) -> CreateResult<WithKeyDataReader<D, SA>>
+  ) -> CreateResult<(ReaderIngredients, WithKeyDataReader<D, SA>)>
   where
     D: 'static + Keyed,
     SA: adapters::with_key::DeserializerAdapter<D>,
@@ -799,7 +1017,7 @@ impl Subscriber {
     &self,
     topic: &Topic,
     qos: Option<QosPolicies>,
-  ) -> CreateResult<WithKeyDataReader<D, CDRDeserializerAdapter<D>>>
+  ) -> CreateResult<(ReaderIngredients, WithKeyDataReader<D, CDRDeserializerAdapter<D>>)>
   where
     D: 'static + serde::de::DeserializeOwned + Keyed,
     for<'de> <D as Keyed>::K: Deserialize<'de>,
@@ -840,7 +1058,7 @@ impl Subscriber {
     &self,
     topic: &Topic,
     qos: Option<QosPolicies>,
-  ) -> CreateResult<NoKeyDataReader<D, SA>>
+  ) -> CreateResult<(ReaderIngredients, NoKeyDataReader<D, SA>)>
   where
     D: 'static,
     SA: adapters::no_key::DeserializerAdapter<D>,
@@ -854,7 +1072,7 @@ impl Subscriber {
     &self,
     topic: &Topic,
     qos: Option<QosPolicies>,
-  ) -> CreateResult<no_key::SimpleDataReader<D, DA>>
+  ) -> CreateResult<(ReaderIngredients, no_key::SimpleDataReader<D, DA>)>
   where
     D: 'static,
     DA: 'static + adapters::no_key::DeserializerAdapter<D>,
@@ -868,7 +1086,7 @@ impl Subscriber {
     &self,
     topic: &Topic,
     qos: Option<QosPolicies>,
-  ) -> CreateResult<NoKeyDataReader<D, CDRDeserializerAdapter<D>>>
+  ) -> CreateResult<(ReaderIngredients, NoKeyDataReader<D, CDRDeserializerAdapter<D>>)>
   where
     D: 'static + serde::de::DeserializeOwned,
   {
@@ -883,7 +1101,7 @@ impl Subscriber {
     entity_id: EntityId,
     qos: Option<QosPolicies>,
     reader_like_stateless: bool, // Create a stateless-like RTPS reader?
-  ) -> CreateResult<WithKeyDataReader<D, SA>>
+  ) -> CreateResult<(ReaderIngredients, WithKeyDataReader<D, SA>)>
   where
     D: 'static + Keyed,
     SA: adapters::with_key::DeserializerAdapter<D>,
@@ -900,7 +1118,7 @@ impl Subscriber {
     entity_id: EntityId,
     qos: Option<QosPolicies>,
     reader_like_stateless: bool, // Create a stateless-like RTPS reader?
-  ) -> CreateResult<NoKeyDataReader<D, SA>>
+  ) -> CreateResult<(ReaderIngredients, NoKeyDataReader<D, SA>)>
   where
     D: 'static,
     SA: adapters::no_key::DeserializerAdapter<D>,
@@ -946,6 +1164,7 @@ impl Subscriber {
     self.inner.participant()
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) fn remove_reader(&self, guid: GUID) {
     self.inner.remove_reader(guid);
   }
@@ -956,13 +1175,17 @@ pub struct InnerSubscriber {
   domain_participant: DomainParticipantWeak,
   discovery_db: Arc<RwLock<DiscoveryDB>>,
   qos: QosPolicies,
+  #[cfg(not(feature = "io-uring"))]
   sender_add_reader: mio_channel::SyncSender<ReaderIngredients>,
+  #[cfg(not(feature = "io-uring"))]
   sender_remove_reader: mio_channel::SyncSender<GUID>,
+  #[cfg(not(feature = "io-uring"))]
   discovery_command: mio_channel::SyncSender<DiscoveryCommand>,
   security_plugins_handle: Option<SecurityPluginsHandle>,
 }
 
 impl InnerSubscriber {
+  #[cfg(not(feature = "io-uring"))]
   pub(super) fn new(
     domain_participant: DomainParticipantWeak,
     discovery_db: Arc<RwLock<DiscoveryDB>>,
@@ -983,6 +1206,21 @@ impl InnerSubscriber {
     }
   }
 
+  #[cfg(feature = "io-uring")]
+  pub(super) fn new(
+    domain_participant: DomainParticipantWeak,
+    discovery_db: Arc<RwLock<DiscoveryDB>>,
+    qos: QosPolicies,
+    security_plugins_handle: Option<SecurityPluginsHandle>,
+  ) -> Self {
+    Self {
+      domain_participant,
+      discovery_db,
+      qos,
+      security_plugins_handle,
+    }
+  }
+
   fn create_datareader_internal<D, SA>(
     &self,
     outer: &Subscriber,
@@ -990,23 +1228,24 @@ impl InnerSubscriber {
     topic: &Topic,
     optional_qos: Option<QosPolicies>,
     reader_like_stateless: bool, // Create a stateless-like RTPS reader? Usually false
-  ) -> CreateResult<WithKeyDataReader<D, SA>>
+  ) -> CreateResult<(ReaderIngredients, WithKeyDataReader<D, SA>)>
   where
     D: 'static + Keyed,
     SA: adapters::with_key::DeserializerAdapter<D>,
   {
-    let simple_dr = self.create_simple_datareader_internal(
+    let (ing, simple_dr) = self.create_simple_datareader_internal(
       outer,
       entity_id_opt,
       topic,
       optional_qos,
       reader_like_stateless,
     )?;
-    Ok(with_key::DataReader::<D, SA>::from_simple_data_reader(
+    Ok((ing, with_key::DataReader::<D, SA>::from_simple_data_reader(
       simple_dr,
-    ))
+    )))
   }
 
+  #[cfg(not(feature = "io-uring"))]
   fn create_simple_datareader_internal<D, SA>(
     &self,
     outer: &Subscriber,
@@ -1216,6 +1455,175 @@ impl InnerSubscriber {
     Ok(datareader)
   }
 
+  #[cfg(feature = "io-uring")]
+  fn create_simple_datareader_internal<D, SA>(
+    &self,
+    outer: &Subscriber,
+    entity_id_opt: Option<EntityId>,
+    topic: &Topic,
+    optional_qos: Option<QosPolicies>,
+    reader_like_stateless: bool, // Create a stateless-like RTPS reader? Usually false
+  ) -> CreateResult<(ReaderIngredients, with_key::SimpleDataReader<D, SA>)>
+  where
+    D: 'static + Keyed,
+    SA: adapters::with_key::DeserializerAdapter<D>,
+  {
+    // The buffer length is zero, i.e. sender and receiver must rendezvous at
+    // send/receive. This is needed to synchronize sending of wakers from
+    // DataReader to Reader. If the capacity is increased, then some data
+    // available for reading notifications may be missed.
+
+    // Use subscriber QoS as basis, modify by Topic settings, and modify by
+    // specified QoS.
+    let qos = self
+      .qos
+      .modify_by(&topic.qos())
+      .modify_by(&optional_qos.unwrap_or_else(QosPolicies::qos_none));
+
+    let entity_id =
+      self.unwrap_or_new_entity_id(entity_id_opt, EntityKind::READER_WITH_KEY_USER_DEFINED);
+
+    let mut dp = match self.participant() {
+      Some(dp) => dp,
+      None => return create_error_dropped!("DomainParticipant doesn't exist anymore."),
+    };
+
+    // Get a handle to the topic cache
+    let topic_cache_handle = match dp.dds_cache().read() {
+      Ok(dds_cache) => dds_cache.get_existing_topic_cache(&topic.name())?,
+      Err(e) => return create_error_poisoned!("Cannot lock DDScache. Error: {}", e),
+    };
+    // Update topic cache with DataReader's Qos
+    match topic_cache_handle.lock() {
+      Ok(mut tc) => tc.update_keep_limits(&qos),
+      Err(e) => return create_error_poisoned!("Cannot lock topic cache. Error: {}", e),
+    };
+
+    let reader_guid = GUID::new_with_prefix_and_id(dp.guid_prefix(), entity_id);
+
+    #[cfg(feature = "security")]
+    if let Some(sec_handle) = self.security_plugins_handle.as_ref() {
+      // Security is enabled.
+      // Check are we allowed to create the DataReader from Access control
+      let check_res = sec_handle.get_plugins().check_create_datareader(
+        reader_guid.prefix,
+        dp.domain_id(),
+        topic.name(),
+        &qos,
+      );
+      match check_res {
+        Ok(check_passed) => {
+          if !check_passed {
+            return create_error_not_allowed_by_security!(
+              "Not allowed to create a DataReader to topic {}",
+              topic.name()
+            );
+          }
+        }
+        Err(e) => {
+          // Something went wrong in the check
+          return create_error_internal!(
+            "Failed to check DataReader rights from Access control: {}",
+            e.msg
+          );
+        }
+      };
+
+      // Register Reader to crypto plugin
+      if let Err(e) = {
+        let reader_security_attributes = sec_handle
+          .get_plugins()
+          .get_reader_sec_attributes(reader_guid, topic.name()); // Release lock
+        reader_security_attributes.and_then(|attributes| {
+          sec_handle
+            .get_plugins()
+            .register_local_reader(reader_guid, qos.property(), attributes)
+        })
+      } {
+        return create_error_internal!(
+          "Failed to register reader to crypto plugin: {} . GUID: {:?}",
+          e,
+          reader_guid
+        );
+      } else {
+        info!(
+          "Registered local reader to crypto plugin. GUID: {:?}",
+          reader_guid
+        );
+      }
+    }
+
+    let new_reader = ReaderIngredients {
+      guid: reader_guid,
+      topic_name: topic.name(),
+      topic_cache_handle: topic_cache_handle.clone(),
+      like_stateless: reader_like_stateless,
+      qos_policy: qos.clone(),
+      security_plugins: self.security_plugins_handle.clone(),
+    };
+
+    #[cfg(not(feature = "security"))]
+    let security_info: Option<EndpointSecurityInfo> = None;
+    #[cfg(feature = "security")]
+    let security_info = if let Some(sec_handle) = self.security_plugins_handle.as_ref() {
+      // Security enabled
+      if reader_guid.entity_id.entity_kind.is_user_defined() {
+        match sec_handle
+          .get_plugins()
+          .get_reader_sec_attributes(reader_guid, topic.name())
+        {
+          Ok(attr) => EndpointSecurityInfo::from(attr).into(),
+          Err(e) => {
+            return create_error_internal!(
+              "Failed to get security info for reader: {}. Guid: {:?}",
+              e,
+              reader_guid
+            );
+          }
+        }
+      } else {
+        None // For the built-in topics
+      }
+    } else {
+      // No security enabled
+      None
+    };
+
+    // Update topic to DiscoveryDB & inform Discovery about it
+    {
+      let mut db = self
+        .discovery_db
+        .write()
+        .or_else(|e| create_error_poisoned!("Cannot lock discovery_db. {}", e))?;
+      db.update_local_topic_reader(&dp, topic, &new_reader, security_info);
+      db.update_topic_data_p(topic);
+    }
+
+    let datareader = with_key::SimpleDataReader::<D, SA>::new(
+      outer.clone(),
+      entity_id,
+      topic.clone(),
+      qos,
+      topic_cache_handle,
+    )?;
+
+    // Inform Discovery about the new reader
+    let reader_guid = self.domain_participant.guid().from_prefix(entity_id);
+
+    let mut guard = dp.dpi.lock().unwrap();
+    let inner = &mut guard.dpi;
+
+    let ev_loop = &mut inner.ev_loop;
+    let discovery = &inner.discovery;
+
+    if let Some(disc) = discovery {
+        disc.sedp_publish_topic(topic, ev_loop)
+    }
+
+    // Return the DataReader to user
+    Ok((new_reader, datareader))
+  }
+
   pub fn create_datareader<D, SA>(
     &self,
     outer: &Subscriber,
@@ -1223,7 +1631,7 @@ impl InnerSubscriber {
     entity_id: Option<EntityId>,
     qos: Option<QosPolicies>,
     reader_like_stateless: bool, // Create a stateless-like RTPS reader? Usually false
-  ) -> CreateResult<WithKeyDataReader<D, SA>>
+  ) -> CreateResult<(ReaderIngredients, WithKeyDataReader<D, SA>)>
   where
     D: 'static + Keyed,
     SA: adapters::with_key::DeserializerAdapter<D>,
@@ -1241,7 +1649,7 @@ impl InnerSubscriber {
     entity_id_opt: Option<EntityId>,
     qos: Option<QosPolicies>,
     reader_like_stateless: bool, // Create a stateless-like RTPS reader? Usually false
-  ) -> CreateResult<NoKeyDataReader<D, SA>>
+  ) -> CreateResult<(ReaderIngredients, NoKeyDataReader<D, SA>)>
   where
     SA: adapters::no_key::DeserializerAdapter<D>,
   {
@@ -1252,7 +1660,7 @@ impl InnerSubscriber {
     let entity_id =
       self.unwrap_or_new_entity_id(entity_id_opt, EntityKind::READER_NO_KEY_USER_DEFINED);
 
-    let d = self.create_datareader_internal::<NoKeyWrapper<D>, DAWrapper<SA>>(
+    let (ing, d) = self.create_datareader_internal::<NoKeyWrapper<D>, DAWrapper<SA>>(
       outer,
       Some(entity_id),
       topic,
@@ -1260,7 +1668,7 @@ impl InnerSubscriber {
       reader_like_stateless,
     )?;
 
-    Ok(NoKeyDataReader::<D, SA>::from_keyed(d))
+    Ok((ing, NoKeyDataReader::<D, SA>::from_keyed(d)))
   }
 
   pub fn create_simple_datareader_no_key<D: 'static, SA>(
@@ -1269,7 +1677,7 @@ impl InnerSubscriber {
     topic: &Topic,
     entity_id_opt: Option<EntityId>,
     qos: Option<QosPolicies>,
-  ) -> CreateResult<no_key::SimpleDataReader<D, SA>>
+  ) -> CreateResult<(ReaderIngredients, no_key::SimpleDataReader<D, SA>)>
   where
     SA: adapters::no_key::DeserializerAdapter<D> + 'static,
   {
@@ -1280,7 +1688,7 @@ impl InnerSubscriber {
     let entity_id =
       self.unwrap_or_new_entity_id(entity_id_opt, EntityKind::READER_NO_KEY_USER_DEFINED);
 
-    let d = self.create_simple_datareader_internal::<NoKeyWrapper<D>, DAWrapper<SA>>(
+    let (ing, d) = self.create_simple_datareader_internal::<NoKeyWrapper<D>, DAWrapper<SA>>(
       outer,
       Some(entity_id),
       topic,
@@ -1288,13 +1696,14 @@ impl InnerSubscriber {
       false,
     )?;
 
-    Ok(no_key::SimpleDataReader::<D, SA>::from_keyed(d))
+    Ok((ing, no_key::SimpleDataReader::<D, SA>::from_keyed(d)))
   }
 
   pub fn participant(&self) -> Option<DomainParticipant> {
     self.domain_participant.clone().upgrade()
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) fn remove_reader(&self, guid: GUID) {
     try_send_timeout(&self.sender_remove_reader, guid, None)
       .unwrap_or_else(|e| error!("Cannot remove Reader {:?} : {:?}", guid, e));

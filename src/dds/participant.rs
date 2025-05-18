@@ -39,7 +39,7 @@ use crate::{
   network::{constant::*, udp_listener::UDPListener},
   rtps::{
     constant::*,
-    dp_event_loop::{DPEventLoop, DomainInfo, EventLoopCommand},
+    dp_event_loop::{DPEventLoop, DomainInfo, EventLoopCommand, Listeners},
     reader::*,
     writer::WriterIngredients,
   },
@@ -58,6 +58,8 @@ use crate::{
 };
 #[cfg(not(feature = "security"))]
 use crate::no_security::SecurityPluginsHandle;
+#[cfg(feature = "io-uring")]
+use timerfd::{TimerFd, TimerState};
 
 pub struct DomainParticipantBuilder {
   domain_id: u16,
@@ -107,7 +109,137 @@ impl DomainParticipantBuilder {
     self.security(auth, access, crypto, configs.into_property_policy());
     self
   }
+  #[cfg(feature = "io-uring")]
+  pub fn build(#[allow(unused_mut)] mut self) -> CreateResult<DomainParticipant> {
+    // QosPolicies with possible security properties, otherwise default
+    let participant_qos = QosPolicies {
+      #[cfg(feature = "security")]
+      property: self.sec_properties,
+      ..Default::default()
+    };
 
+    let candidate_participant_guid = GUID::new_participant_guid();
+    #[cfg(not(feature = "security"))]
+    let participant_guid = candidate_participant_guid;
+    // If security plugins are present, security is enabled
+    #[cfg(feature = "security")]
+    let participant_guid = if let Some(ref mut security_plugins) = self.security_plugins.as_mut() {
+      trace!("DomainParticipant security construction start");
+      // Do the security checks according to DDS Security spec v1.1
+      // Section "8.8.1 Authentication and AccessControl behavior with local
+      // DomainParticipant". The other steps related to Discovery
+      // (generating tokens etc.) are done when initializing Discovery.
+
+      let sec_guid = match security_plugins.validate_local_identity(
+        self.domain_id,
+        &participant_qos,
+        candidate_participant_guid,
+      ) {
+        Ok(guid) => guid,
+        Err(e) => {
+          return create_error_not_allowed_by_security!(
+            "Validating local identity failed: {}",
+            e.msg
+          );
+        }
+      };
+
+      if let Err(e) = security_plugins.validate_local_permissions(
+        self.domain_id,
+        sec_guid.prefix,
+        &participant_qos,
+      ) {
+        return create_error_not_allowed_by_security!(
+          "Validating local permissions failed: {}",
+          e.msg
+        );
+      }
+
+      match security_plugins.check_create_participant(
+        self.domain_id,
+        sec_guid.prefix,
+        &participant_qos,
+      ) {
+        Ok(check_passed) => {
+          if !check_passed {
+            return create_error_not_allowed_by_security!(
+              "Access control does not allow to create the local participant",
+            );
+          }
+        }
+        Err(e) => {
+          return create_error_internal!(
+            "Something went wrong in checking local participant permissions: {}",
+            e
+          );
+        }
+      }
+
+      // Register participant with the crypto plugin
+      if let Err(e) = security_plugins
+        .get_participant_sec_attributes(sec_guid.prefix)
+        .and_then(|sec_attr| {
+          security_plugins.register_local_participant(
+            sec_guid.prefix,
+            participant_qos.property.clone(),
+            sec_attr,
+          )
+        })
+      {
+        return create_error_internal!(
+          "Could not register participant with crypto plugin {}",
+          e.msg
+        );
+      };
+      sec_guid
+    } else {
+      candidate_participant_guid
+    };
+
+    trace!("DomainParticipant construct start");
+    #[cfg(not(feature = "security"))]
+    let security_plugins_handle = None;
+    #[cfg(feature = "security")]
+    let security_plugins_handle = self.security_plugins.map(SecurityPluginsHandle::new);
+
+    // intermediate DP wrapper
+    let mut dp = DomainParticipantDisc::new(
+      self.domain_id,
+      participant_guid,
+      participant_qos,
+      security_plugins_handle.clone(),
+    )?;
+
+    // outer DP wrapper
+    /*
+    let dp = DomainParticipant {
+      dpi: Arc::new(Mutex::new(dp)),
+    };
+
+    // Construct and start background thread
+    let dp_clone = dp.weak_clone();
+    let disc_db_clone = dp.discovery_db();
+    */
+
+
+    let disc_db = dp.dpi.discovery_db.clone();
+
+    let mut dp = DomainParticipant {
+      dpi: Arc::new(Mutex::new(dp)),
+    };
+
+    let disc = Discovery::setup_discovery(&mut dp, disc_db, security_plugins_handle)?;
+
+    let mut guard = dp.dpi.lock().unwrap().dpi.discovery = Some(disc);
+
+
+    //TODO: need to put it into the struct and poll discovery
+
+    debug!("Waiting for discovery to start"); // blocking until discovery answers
+    Ok(dp)
+  }
+
+  #[cfg(not(feature = "io-uring"))]
   pub fn build(#[allow(unused_mut)] mut self) -> CreateResult<DomainParticipant> {
     // QosPolicies with possible security properties, otherwise default
     let participant_qos = QosPolicies {
@@ -303,7 +435,19 @@ impl DomainParticipantBuilder {
 #[derive(Clone)]
 // This is a smart pointer for DomainParticipant for easier manipulation.
 pub struct DomainParticipant {
-  dpi: Arc<Mutex<DomainParticipantDisc>>,
+  pub(crate) dpi: Arc<Mutex<DomainParticipantDisc>>,
+}
+
+#[cfg(feature = "io-uring")]
+impl Register for DomainParticipant {
+  fn register_io_uring(
+    &mut self,
+    ring: &mut io_uring::IoUring,
+    udata: u64,
+    idx: &mut u16,
+  ) -> std::io::Result<()> {
+    self.dpi.lock().unwrap().register_io_uring(ring, udata, idx)
+  }
 }
 
 impl DomainParticipant {
@@ -452,6 +596,7 @@ impl DomainParticipant {
   /// let domain_participant = DomainParticipant::new(0).expect("Failed to create participant");
   /// domain_participant.assert_liveliness();
   /// ```
+  #[cfg(not(feature = "io-uring"))]
   pub fn assert_liveliness(&self) -> WriteResult<(), ()> {
     self.dpi.lock()?.assert_liveliness()
   }
@@ -488,6 +633,41 @@ impl DomainParticipant {
   pub(crate) fn self_locators(&self) -> HashMap<mio_06::Token, Vec<Locator>> {
     self.dpi.lock().unwrap().self_locators()
   }
+
+  pub fn read_buf(&mut self, entry: io_uring::cqueue::Entry) -> Option<crate::rtps::Message> {
+    let mut inner = self.dpi.lock().unwrap();
+
+    let buf = inner.dpi.ev_loop.udp_listeners.read_buf(entry)?;
+
+    let bytes = bytes::Bytes::copy_from_slice(buf);
+
+    let msg = crate::rtps::Message::read_from_buffer(&bytes).unwrap();
+
+    let recv = &mut inner.dpi.ev_loop.message_receiver;
+
+    recv.handle_parsed_message(msg);
+
+    None
+  }
+
+  pub fn add_local_reader(&mut self, reader_ing: ReaderIngredients) {
+    self.dpi.lock().unwrap().add_local_reader(reader_ing)
+  }
+
+  pub fn add_local_writer(&mut self, writer_ing: WriterIngredients) {
+    self.dpi.lock().unwrap().add_local_writer(writer_ing)
+  }
+
+    #[cfg(feature = "io-uring")]
+  pub fn tick_publish_timer(&mut self) -> Option<TimerState> {
+      match self.dpi.lock().unwrap().dpi.discovery {
+          Some(Discovery{publish_timer: Some(ref fd), ..}) => {
+              let state = fd.get_state();
+              Some(state)
+          }
+          _ => None,
+      }
+  }
 } // end impl DomainParticipant
 
 // --------------------------------------------------------------------------
@@ -499,6 +679,7 @@ pub struct DomainParticipantStatusListener {
 
 impl DomainParticipantStatusListener {}
 
+#[cfg(not(feature = "io-uring"))]
 impl<'a> StatusEvented<'a, DomainParticipantStatusEvent, DomainParticipantStatusStream<'a>>
   for DomainParticipantStatusListener
 {
@@ -526,6 +707,7 @@ impl<'a> StatusEvented<'a, DomainParticipantStatusEvent, DomainParticipantStatus
   }
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl mio_08::event::Source for DomainParticipantStatusListener {
   fn register(
     &mut self,
@@ -565,6 +747,7 @@ impl mio_08::event::Source for DomainParticipantStatusListener {
   }
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl mio_06::Evented for DomainParticipantStatusListener {
   // We just delegate all the operations to notification_receiver, since it
   // already implements Evented
@@ -611,10 +794,12 @@ impl mio_06::Evented for DomainParticipantStatusListener {
   }
 }
 
+#[cfg(not(feature = "io-uring"))]
 pub struct DomainParticipantStatusStream<'a> {
   status_listener: &'a DomainParticipantStatusListener,
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl Stream for DomainParticipantStatusStream<'_> {
   type Item = DomainParticipantStatusEvent;
 
@@ -637,6 +822,7 @@ impl Stream for DomainParticipantStatusStream<'_> {
   } // fn
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl FusedStream for DomainParticipantStatusStream<'_> {
   fn is_terminated(&self) -> bool {
     false
@@ -741,16 +927,31 @@ impl RTPSEntity for DomainParticipantWeak {
 // This struct exists only to control and stop Discovery when DomainParticipant
 // should be dropped
 pub(crate) struct DomainParticipantDisc {
-  dpi: DomainParticipantInner,
+  pub(crate) dpi: DomainParticipantInner,
   // Discovery control
+  #[cfg(not(feature = "io-uring"))]
   discovery_command_sender: mio_channel::SyncSender<DiscoveryCommand>,
+  #[cfg(not(feature = "io-uring"))]
   discovery_join_handle: mio_channel::Receiver<JoinHandle<()>>,
   // This allows deterministic generation of EntityIds for DataReader, DataWriter, etc.
   entity_id_generator: atomic::AtomicU32,
 }
 
+#[cfg(feature = "io-uring")]
+impl Register for DomainParticipantDisc {
+  fn register_io_uring(
+    &mut self,
+    ring: &mut io_uring::IoUring,
+    udata: u64,
+    idx: &mut u16,
+  ) -> std::io::Result<()> {
+    self.dpi.register_io_uring(ring, udata, idx)
+  }
+}
+
 impl DomainParticipantDisc {
   #[allow(clippy::too_many_arguments)]
+  #[cfg(not(feature = "io-uring"))]
   pub fn new(
     domain_id: u16,
     participant_guid: GUID,
@@ -783,6 +984,26 @@ impl DomainParticipantDisc {
     })
   }
 
+  #[cfg(feature = "io-uring")]
+  pub fn new(
+    domain_id: u16,
+    participant_guid: GUID,
+    qos_policies: QosPolicies,
+    security_plugins_handle: Option<SecurityPluginsHandle>,
+  ) -> CreateResult<Self> {
+    let dpi = DomainParticipantInner::new(
+      domain_id,
+      participant_guid,
+      qos_policies,
+      security_plugins_handle,
+    )?;
+
+    Ok(Self {
+      dpi,
+      entity_id_generator: atomic::AtomicU32::new(0),
+    })
+  }
+
   // This generates identifiers that consist of given EntityKind and arbitrary,
   // unique identifier.
   pub(crate) fn new_entity_id(&self, entity_kind: EntityKind) -> EntityId {
@@ -793,6 +1014,7 @@ impl DomainParticipantDisc {
     EntityId::new([papa_byte, mama_byte, baby_byte], entity_kind)
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn create_publisher(
     &self,
     dp: &DomainParticipantWeak,
@@ -803,6 +1025,16 @@ impl DomainParticipantDisc {
       .create_publisher(dp, qos, self.discovery_command_sender.clone())
   }
 
+  #[cfg(feature = "io-uring")]
+  pub fn create_publisher(
+    &self,
+    dp: &DomainParticipantWeak,
+    qos: &QosPolicies,
+  ) -> CreateResult<Publisher> {
+    self.dpi.create_publisher(dp, qos)
+  }
+
+  #[cfg(not(feature = "io-uring"))]
   pub fn create_subscriber(
     &self,
     dp: &DomainParticipantWeak,
@@ -811,6 +1043,15 @@ impl DomainParticipantDisc {
     self
       .dpi
       .create_subscriber(dp, qos, self.discovery_command_sender.clone())
+  }
+
+  #[cfg(feature = "io-uring")]
+  pub fn create_subscriber(
+    &self,
+    dp: &DomainParticipantWeak,
+    qos: &QosPolicies,
+  ) -> CreateResult<Subscriber> {
+    self.dpi.create_subscriber(dp, qos)
   }
 
   pub fn create_topic(
@@ -859,6 +1100,7 @@ impl DomainParticipantDisc {
   //   self.dpi.lock().unwrap().discovery_db.clone()
   // }
 
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) fn assert_liveliness(&self) -> WriteResult<(), ()> {
     // No point in checking for the LIVELINESS QoS of MANUAL_BY_PARTICIPANT,
     // the discovery command mutates a field which is only read
@@ -874,18 +1116,29 @@ impl DomainParticipantDisc {
     self.dpi.self_locators.clone()
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) fn status_channel_receiver(
     &self,
   ) -> &StatusChannelReceiver<DomainParticipantStatusEvent> {
     self.dpi.status_channel_receiver()
   }
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) fn status_channel_receiver_mut(
     &mut self,
   ) -> &mut StatusChannelReceiver<DomainParticipantStatusEvent> {
     self.dpi.status_channel_receiver_mut()
   }
+
+  pub fn add_local_reader(&mut self, ing: ReaderIngredients) {
+      self.dpi.ev_loop.add_local_reader(ing);
+  }
+
+  pub fn add_local_writer(&mut self, ing: WriterIngredients) {
+      self.dpi.ev_loop.add_local_writer(ing);
+  }
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl Drop for DomainParticipantDisc {
   fn drop(&mut self) {
     info!("===== RustDDS shutting down ===== .drop() DomainParticipantDisc");
@@ -926,23 +1179,35 @@ pub(crate) struct DomainParticipantInner {
   my_qos_policies: QosPolicies,
 
   // Adding Readers
+  #[cfg(not(feature = "io-uring"))]
   sender_add_reader: mio_channel::SyncSender<ReaderIngredients>,
+  #[cfg(not(feature = "io-uring"))]
   sender_remove_reader: mio_channel::SyncSender<GUID>,
 
   // dp_event_loop control
+  #[cfg(not(feature = "io-uring"))]
   stop_poll_sender: mio_channel::Sender<EventLoopCommand>,
+  #[cfg(not(feature = "io-uring"))]
   ev_loop_handle: Option<JoinHandle<()>>, // this is Option, because it needs to be extracted
+  #[cfg(feature = "io-uring")]
+  pub ev_loop: DPEventLoop, // this is Option, because it needs to be extracted
+  #[cfg(feature = "io-uring")]
+  pub discovery: Option<Discovery>, // this is Option, because it needs to be extracted
   // out of the struct (take) in order to .join() on the handle.
 
   // Writers
+  #[cfg(not(feature = "io-uring"))]
   add_writer_sender: mio_channel::SyncSender<WriterIngredients>,
+  #[cfg(not(feature = "io-uring"))]
   remove_writer_sender: mio_channel::SyncSender<GUID>,
 
   dds_cache: Arc<RwLock<DDSCache>>,
   discovery_db: Arc<RwLock<DiscoveryDB>>,
+  #[cfg(not(feature = "io-uring"))]
   discovery_db_event_receiver: mio_channel::Receiver<()>,
 
   // status event receiver
+  #[cfg(not(feature = "io-uring"))]
   status_receiver: StatusChannelReceiver<DomainParticipantStatusEvent>,
 
   // RTPS locators describing how to reach this DP
@@ -951,32 +1216,32 @@ pub(crate) struct DomainParticipantInner {
   security_plugins_handle: Option<SecurityPluginsHandle>,
 }
 
-impl Drop for DomainParticipantInner {
-  fn drop(&mut self) {
-    // if send has an error simply leave as we have lost control of the
-    // ev_loop_thread anyways
-    if self.stop_poll_sender.send(EventLoopCommand::Stop).is_err() {
-      error!("dp_event_loop not responding to stop discovery_command");
-      return;
-    }
+//network::{constant::user_traffic_unicast_port, udp_sender::UDPSender},
 
-    debug!("Waiting for dp_event_loop join");
-    match self.ev_loop_handle.take() {
-      Some(join_handle) => {
-        join_handle
-          .join()
-          .unwrap_or_else(|e| warn!("Failed to join dp_event_loop: {e:?}"));
-      }
-      None => {
-        error!("Someone managed to steal dp_event_loop join handle from DomainParticipantInner.");
-      }
+#[cfg(feature = "io-uring")]
+use io_uring::IoUring;
+
+#[cfg(feature = "io-uring")]
+use crate::network::util::Register;
+#[cfg(feature = "io-uring")]
+impl Register for DomainParticipantInner {
+  fn register_io_uring(
+    &mut self,
+    ring: &mut io_uring::IoUring,
+    udata: u64,
+    idx: &mut u16,
+  ) -> std::io::Result<()> {
+    self.ev_loop.register_io_uring(ring, udata, idx)?;
+    if let Some(disc) = self.discovery.as_mut() {
+        disc.register_io_uring(ring, u64::MAX, idx)?;
     }
-    debug!("Joined dp_event_loop");
+    Ok(())
   }
 }
 
 impl DomainParticipantInner {
   #[allow(clippy::too_many_arguments)]
+  #[cfg(not(feature = "io-uring"))]
   fn new(
     domain_id: u16,
     participant_guid: GUID,
@@ -1176,6 +1441,146 @@ impl DomainParticipantInner {
     })
   }
 
+  #[cfg(feature = "io-uring")]
+  fn new(
+    domain_id: u16,
+    participant_guid: GUID,
+    _qos_policies: QosPolicies,
+    security_plugins_handle: Option<SecurityPluginsHandle>,
+  ) -> CreateResult<Self> {
+    #[cfg(not(feature = "security"))]
+    let _dummy = _qos_policies; // to make clippy happy
+
+    //let mut listeners = HashMap::new();
+
+    let multicast_discovery = match UDPListener::new_multicast(
+      "0.0.0.0",
+      spdp_well_known_multicast_port(domain_id),
+      Ipv4Addr::new(239, 255, 0, 1),
+    ) {
+      Ok(l) => Some(l),
+      Err(e) => {
+        warn!("Cannot get multicast discovery listener: {e:?}");
+        None
+      }
+    };
+
+    let mut participant_id = 0;
+
+    let mut discovery_listener = None;
+
+    // Magic value 120 below is from RTPS spec 2.5 Section "9.6.2.3 Default Port
+    // Numbers"
+    while discovery_listener.is_none() && participant_id < 120 {
+      discovery_listener = UDPListener::new_unicast(
+        "0.0.0.0",
+        spdp_well_known_unicast_port(domain_id, participant_id),
+      )
+      .ok();
+      if discovery_listener.is_none() {
+        participant_id += 1;
+      }
+    }
+
+    info!("ParticipantId {} selected.", participant_id);
+
+    // here discovery_listener is redefined (shadowed)
+    let unicast_discovery = match discovery_listener {
+      Some(dl) => dl,
+      None => return create_error_out_of_resources!("Could not find free ParticipantId"),
+    };
+
+    // Now the user traffic listeners
+
+    let mulciast_user_traffic = match UDPListener::new_multicast(
+      "0.0.0.0",
+      user_traffic_multicast_port(domain_id),
+      Ipv4Addr::new(239, 255, 0, 1),
+    ) {
+      Ok(l) => Some(l),
+      Err(e) => {
+        warn!("Cannot get multicast user traffic listener: {e:?}");
+        None
+      }
+    };
+    let unicast_user_traffic = UDPListener::new_unicast(
+      "0.0.0.0",
+      user_traffic_unicast_port(domain_id, participant_id),
+    )
+    .or_else(|e| {
+      if matches!(e.kind(), ErrorKind::AddrInUse) {
+        // If we do not get the preferred listening port,
+        // try again, with "any" port number.
+        UDPListener::new_unicast("0.0.0.0", 0).or_else(|e| {
+          create_error_out_of_resources!(
+            "Could not open unicast user traffic listener, any port number: {:?}",
+            e
+          )
+        })
+      } else {
+        create_error_out_of_resources!("Could not open unicast user traffic listener: {e:?}")
+      }
+    })?;
+
+    let listeners = Listeners::new(
+      multicast_discovery,
+      unicast_discovery,
+      mulciast_user_traffic,
+      unicast_user_traffic,
+    );
+
+    let self_locators = listeners.to_locator_addrs();
+
+    let domain_info = DomainInfo {
+      domain_participant_guid: participant_guid,
+      domain_id,
+      participant_id,
+    };
+    let domain_info_clone = domain_info.clone();
+
+    let dds_cache = Arc::new(RwLock::new(DDSCache::new()));
+
+    let discovery_db = Arc::new(RwLock::new(DiscoveryDB::new(participant_guid)));
+
+    let disc_db_clone = discovery_db.clone();
+
+    let dp_event_loop = DPEventLoop::new(
+      domain_info_clone,
+      dds_cache.clone(),
+      listeners,
+      disc_db_clone,
+      participant_guid.prefix,
+      security_plugins_handle.clone(),
+    );
+
+    #[cfg(feature = "security")]
+    let have_security = true;
+    #[cfg(not(feature = "security"))]
+    let have_security = false;
+
+    info!(
+      "New DomainParticipantInner: domain_id={:?} participant_id={:?} GUID={:?} \
+       security_feature_enabled={}",
+      domain_id, participant_id, participant_guid, have_security,
+    );
+
+    Ok(Self {
+      domain_info,
+      #[cfg(feature = "security")]
+      my_qos_policies: _qos_policies,
+      dds_cache,
+      discovery_db,
+      self_locators,
+      security_plugins_handle,
+      ev_loop: dp_event_loop,
+      discovery: None,
+    })
+  }
+
+  pub fn add_local_reader(&mut self, ing: ReaderIngredients) {
+      self.ev_loop.add_local_reader(ing);
+  }
+
   pub fn dds_cache(&self) -> Arc<RwLock<DDSCache>> {
     self.dds_cache.clone()
   }
@@ -1190,6 +1595,7 @@ impl DomainParticipantInner {
   // There are no delete function for publisher or subscriber. Deletion is
   // performed by deleting the Publisher or Subscriber object, who upon deletion
   // will notify the DomainParticipant.
+  #[cfg(not(feature = "io-uring"))]
   pub fn create_publisher(
     &self,
     domain_participant: &DomainParticipantWeak,
@@ -1208,6 +1614,22 @@ impl DomainParticipantInner {
     ))
   }
 
+  #[cfg(feature = "io-uring")]
+  pub fn create_publisher(
+    &self,
+    domain_participant: &DomainParticipantWeak,
+    qos: &QosPolicies,
+  ) -> CreateResult<Publisher> {
+    Ok(Publisher::new(
+      domain_participant.clone(),
+      self.discovery_db.clone(),
+      qos.clone(),
+      qos.clone(),
+      self.security_plugins_handle.clone(),
+    ))
+  }
+
+  #[cfg(not(feature = "io-uring"))]
   pub fn create_subscriber(
     &self,
     domain_participant: &DomainParticipantWeak,
@@ -1221,6 +1643,20 @@ impl DomainParticipantInner {
       self.sender_add_reader.clone(),
       self.sender_remove_reader.clone(),
       discovery_command,
+      self.security_plugins_handle.clone(),
+    ))
+  }
+
+  #[cfg(feature = "io-uring")]
+  pub fn create_subscriber(
+    &self,
+    domain_participant: &DomainParticipantWeak,
+    qos: &QosPolicies,
+  ) -> CreateResult<Subscriber> {
+    Ok(Subscriber::new(
+      domain_participant.clone(),
+      self.discovery_db.clone(),
+      qos.clone(),
       self.security_plugins_handle.clone(),
     ))
   }
@@ -1286,6 +1722,7 @@ impl DomainParticipantInner {
 
   // Do not implement content filtered topics or multi-topics (yet)
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn find_topic(
     &self,
     domain_participant_weak: &DomainParticipantWeak,
@@ -1325,6 +1762,23 @@ impl DomainParticipantInner {
     }
 
     Ok(None)
+  }
+
+  #[cfg(feature = "io-uring")]
+  /// note that this returns whetner or not we have an immediate response, if
+  /// not, something needs to be set up to watch for incoming topics that
+  /// match what were looking for.
+  pub fn find_topic(
+    &self,
+    domain_participant_weak: &DomainParticipantWeak,
+    name: &str,
+    timeout: Duration,
+  ) -> CreateResult<Option<Topic>> {
+    if let Some(topic) = self.find_topic_in_discovery_db(domain_participant_weak, name)? {
+      return Ok(Some(topic));
+    } else {
+      Ok(None)
+    }
   }
 
   fn find_topic_in_discovery_db(
@@ -1399,11 +1853,15 @@ impl DomainParticipantInner {
 
     db.all_user_topics().cloned().collect()
   }
+
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) fn status_channel_receiver(
     &self,
   ) -> &StatusChannelReceiver<DomainParticipantStatusEvent> {
     &self.status_receiver
   }
+
+  #[cfg(not(feature = "io-uring"))]
   pub(crate) fn status_channel_receiver_mut(
     &mut self,
   ) -> &mut StatusChannelReceiver<DomainParticipantStatusEvent> {

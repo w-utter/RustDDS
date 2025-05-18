@@ -20,6 +20,7 @@ categories = ["network-programming", "science::robotics"]
 # the science-robotics category is because of ROS2
 
 [features]
+default = ["io-uring"]
 # Feature "security" implements the OMG "DDS Security" specification v 1.1
 # It adds a large amount of new code and dependencies.
 security = [
@@ -30,6 +31,8 @@ security = [
   "dep:bcder", "dep:const-oid",
   "dep:openssl", "dep:cryptoki"
   ]
+
+io-uring = []
 
 # If feature "build_openssl" is enabled (along with feature "security"),
 # a local copy of OpenSSL will be built.
@@ -42,6 +45,10 @@ mio-extras = "2.0.6"
 
 mio_08 = { package = "mio" , version ="0.8.5", features = ["net", "os-poll"] } 
 socketpair = "0.19"
+
+io-uring = { git = "https://github.com/w-utter/io-uring", branch = "read_multishot"}
+timerfd = "1.6"
+libc = "0.2"
 
 bit-vec = "0.8.0"
 speedy = "0.8.0"

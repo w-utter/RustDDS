@@ -43,10 +43,12 @@ where
     }
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn set_waker(&self, w: Option<Waker>) {
     self.keyed_simpledatareader.set_waker(w);
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn drain_read_notifications(&self) {
     self.keyed_simpledatareader.drain_read_notifications();
   }
@@ -83,6 +85,7 @@ where
     self.keyed_simpledatareader.guid()
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn as_async_stream(
     &self,
   ) -> impl FusedStream<Item = ReadResult<DeserializedCacheChange<D>>> + '_
@@ -92,6 +95,7 @@ where
     Self::as_async_stream_with(self, DA::DECODER)
   }
 
+  #[cfg(not(feature = "io-uring"))]
   pub fn as_async_stream_with<'a, S>(
     &'a self,
     decoder: S,
@@ -129,6 +133,7 @@ where
 
 // This is  not part of DDS spec. We implement mio Eventd so that the
 // application can asynchronously poll DataReader(s).
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> mio_06::Evented for SimpleDataReader<D, DA>
 where
   DA: DeserializerAdapter<D>,
@@ -164,6 +169,7 @@ where
   }
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> mio_08::event::Source for SimpleDataReader<D, DA>
 where
   DA: DeserializerAdapter<D>,
@@ -194,8 +200,10 @@ where
   }
 }
 
+#[cfg(not(feature = "io-uring"))]
 use crate::with_key::SimpleDataReaderEventStream;
 
+#[cfg(not(feature = "io-uring"))]
 impl<'a, D, DA>
   StatusEvented<
     'a,

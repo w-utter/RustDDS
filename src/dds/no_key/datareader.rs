@@ -17,14 +17,18 @@ use crate::{
     with_key::{
       datareader as datareader_with_key,
       datasample::{DataSample as WithKeyDataSample, Sample},
-      BareDataReaderStream as WithKeyBareDataReaderStream, DataReader as WithKeyDataReader,
-      DataReaderEventStream as WithKeyDataReaderEventStream,
-      DataReaderStream as WithKeyDataReaderStream,
+      DataReader as WithKeyDataReader,
     },
   },
   serialization::CDRDeserializerAdapter,
   structure::entity::RTPSEntity,
   StatusEvented, GUID,
+};
+#[cfg(not(feature = "io-uring"))]
+use crate::dds::{
+  BareDataReaderStream as WithKeyBareDataReaderStream,
+  DataReaderEventStream as WithKeyDataReaderEventStream,
+  DataReaderStream as WithKeyDataReaderStream,
 };
 use super::wrappers::{DAWrapper, NoKeyWrapper};
 
@@ -105,6 +109,7 @@ where
   /// let mut data_reader = subscriber.create_datareader_no_key::<SomeType, CDRDeserializerAdapter<_>>(&topic, None).unwrap();
   /// let data = data_reader.read(10, ReadCondition::not_read());
   /// ```
+  #[cfg(not(feature = "io-uring"))]
   pub fn read(
     &mut self,
     max_samples: usize,
@@ -150,6 +155,7 @@ where
   /// let mut data_reader = subscriber.create_datareader_no_key::<SomeType, CDRDeserializerAdapter<_>>(&topic, None).unwrap();
   /// let data = data_reader.take(10, ReadCondition::not_read());
   /// ```
+  #[cfg(not(feature = "io-uring"))]
   pub fn take(
     &mut self,
     max_samples: usize,
@@ -191,6 +197,7 @@ where
   ///   // Do something
   /// }
   /// ```
+  #[cfg(not(feature = "io-uring"))]
   pub fn read_next_sample(&mut self) -> ReadResult<Option<DataSample<&D>>> {
     let mut ds = self.read(1, ReadCondition::not_read())?;
     Ok(ds.pop())
@@ -221,6 +228,7 @@ where
   ///   // Do something
   /// }
   /// ```
+  #[cfg(not(feature = "io-uring"))]
   pub fn take_next_sample(&mut self) -> ReadResult<Option<DataSample<D>>> {
     let mut ds = self.take(1, ReadCondition::not_read())?;
     Ok(ds.pop())
@@ -255,6 +263,7 @@ where
   ///   // Do something
   /// }
   /// ```
+  #[cfg(not(feature = "io-uring"))]
   pub fn iterator(&mut self) -> ReadResult<impl Iterator<Item = &D>> {
     // TODO: We could come up with a more efficient implementation than wrapping a
     // read call
@@ -292,6 +301,7 @@ where
   ///   // Do something
   /// }
   /// ```
+  #[cfg(not(feature = "io-uring"))]
   pub fn conditional_iterator(
     &mut self,
     read_condition: ReadCondition,
@@ -335,6 +345,7 @@ where
   ///   // Do something
   /// }
   /// ```
+  #[cfg(not(feature = "io-uring"))]
   pub fn into_iterator(&mut self) -> ReadResult<impl Iterator<Item = D>> {
     // TODO: We could come up with a more efficient implementation than wrapping a
     // read call
@@ -374,6 +385,7 @@ where
   ///   // Do something
   /// }
   /// ```
+  #[cfg(not(feature = "io-uring"))]
   pub fn into_conditional_iterator(
     &mut self,
     read_condition: ReadCondition,
@@ -423,6 +435,7 @@ where
   */
 
   /// An async stream for reading the (bare) data samples
+  #[cfg(not(feature = "io-uring"))]
   pub fn async_bare_sample_stream(self) -> BareDataReaderStream<D, DA> {
     BareDataReaderStream {
       keyed_stream: self.keyed_datareader.async_bare_sample_stream(),
@@ -430,6 +443,7 @@ where
   }
 
   /// An async stream for reading the data samples
+  #[cfg(not(feature = "io-uring"))]
   pub fn async_sample_stream(self) -> DataReaderStream<D, DA> {
     DataReaderStream {
       keyed_stream: self.keyed_datareader.async_sample_stream(),
@@ -441,6 +455,7 @@ where
 //  TODO: test
 // This is  not part of DDS spec. We implement mio mio_06::Evented so that the
 // application can asynchronously poll DataReader(s).
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> mio_06::Evented for DataReader<D, DA>
 where
   DA: DeserializerAdapter<D>,
@@ -476,6 +491,7 @@ where
 
 /// WARNING! UNTESTED
 //  TODO: test
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> mio_08::event::Source for DataReader<D, DA>
 where
   DA: DeserializerAdapter<D>,
@@ -520,8 +536,10 @@ where
 
 /// WARNING! UNTESTED
 //  TODO: test
+#[cfg(not(feature = "io-uring"))]
 use crate::with_key::SimpleDataReaderEventStream;
 
+#[cfg(not(feature = "io-uring"))]
 impl<'a, D, DA>
   StatusEvented<
     'a,
@@ -579,6 +597,7 @@ where
 /// Wraps [`with_key::BareDataReaderStream`](crate::with_key::BareDataReaderStream) and
 /// unwraps [`Sample`](crate::with_key::Sample) and `NoKeyWrapper` on
 /// `poll_next`.
+#[cfg(not(feature = "io-uring"))]
 pub struct BareDataReaderStream<
   D: 'static,
   DA: DeserializerAdapter<D> + 'static = CDRDeserializerAdapter<D>,
@@ -586,6 +605,7 @@ pub struct BareDataReaderStream<
   keyed_stream: WithKeyBareDataReaderStream<NoKeyWrapper<D>, DAWrapper<DA>>,
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> BareDataReaderStream<D, DA>
 where
   D: 'static,
@@ -599,6 +619,7 @@ where
 }
 
 // https://users.rust-lang.org/t/take-in-impl-future-cannot-borrow-data-in-a-dereference-of-pin/52042
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> Unpin for BareDataReaderStream<D, DA>
 where
   D: 'static,
@@ -606,6 +627,7 @@ where
 {
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> Stream for BareDataReaderStream<D, DA>
 where
   D: 'static,
@@ -631,6 +653,7 @@ where
   }
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> FusedStream for BareDataReaderStream<D, DA>
 where
   D: 'static,
@@ -646,6 +669,7 @@ where
 /// Wraps [`with_key::DataReaderStream`](crate::with_key::DataReaderStream) and
 /// unwraps [`Sample`](crate::with_key::Sample) and `NoKeyWrapper` on
 /// `poll_next`.
+#[cfg(not(feature = "io-uring"))]
 pub struct DataReaderStream<
   D: 'static,
   DA: DeserializerAdapter<D> + 'static = CDRDeserializerAdapter<D>,
@@ -653,6 +677,7 @@ pub struct DataReaderStream<
   keyed_stream: WithKeyDataReaderStream<NoKeyWrapper<D>, DAWrapper<DA>>,
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> DataReaderStream<D, DA>
 where
   D: 'static,
@@ -666,6 +691,7 @@ where
 }
 
 // https://users.rust-lang.org/t/take-in-impl-future-cannot-borrow-data-in-a-dereference-of-pin/52042
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> Unpin for DataReaderStream<D, DA>
 where
   D: 'static,
@@ -673,6 +699,7 @@ where
 {
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> Stream for DataReaderStream<D, DA>
 where
   D: 'static,
@@ -703,6 +730,7 @@ where
   }
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> FusedStream for DataReaderStream<D, DA>
 where
   D: 'static,
@@ -717,6 +745,7 @@ where
 // ----------------------------------------------------------------------------------------------------
 
 /// Wraps [`with_key::DataReaderEventStream`](crate::with_key::DataReaderEventStream).
+#[cfg(not(feature = "io-uring"))]
 pub struct DataReaderEventStream<
   D: 'static,
   DA: DeserializerAdapter<D> + 'static = CDRDeserializerAdapter<D>,
@@ -724,6 +753,7 @@ pub struct DataReaderEventStream<
   keyed_stream: WithKeyDataReaderEventStream<NoKeyWrapper<D>, DAWrapper<DA>>,
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> Stream for DataReaderEventStream<D, DA>
 where
   D: 'static,
@@ -736,6 +766,7 @@ where
   }
 }
 
+#[cfg(not(feature = "io-uring"))]
 impl<D, DA> FusedStream for DataReaderEventStream<D, DA>
 where
   D: 'static,

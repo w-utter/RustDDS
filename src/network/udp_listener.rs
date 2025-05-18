@@ -22,11 +22,22 @@ static_assertions::const_assert!(MESSAGE_BUFFER_ALLOCATION_CHUNK > MAX_MESSAGE_S
 /// Listens to messages coming to specified host port combination.
 /// Only messages from added listen addressed are read when get_all_messages is
 /// called.
-#[derive(Debug)]
 pub struct UDPListener {
   socket: mio_06::net::UdpSocket,
   receive_buffer: BytesMut,
+  #[cfg(feature = "io-uring")]
+  recv_buf: Option<BufRing>,
   multicast_group: Option<Ipv4Addr>,
+}
+
+impl core::fmt::Debug for UDPListener {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("UDPListener")
+      .field("socket", &self.socket)
+      .field("receive_buffer", &self.receive_buffer)
+      .field("multicast_group", &self.multicast_group)
+      .finish()
+  }
 }
 
 impl Drop for UDPListener {
@@ -90,6 +101,8 @@ impl UDPListener {
       mio_socket.local_addr()
     );
 
+    println!("{mio_socket:?}");
+
     Ok(mio_socket)
   }
 
@@ -108,6 +121,7 @@ impl UDPListener {
     Ok(Self {
       socket: mio_socket,
       receive_buffer: BytesMut::with_capacity(MESSAGE_BUFFER_ALLOCATION_CHUNK),
+      recv_buf: None,
       multicast_group: None,
     })
   }
@@ -139,6 +153,7 @@ impl UDPListener {
     Ok(Self {
       socket: mio_socket,
       receive_buffer: BytesMut::with_capacity(MESSAGE_BUFFER_ALLOCATION_CHUNK),
+      recv_buf: None,
       multicast_group: Some(multicast_group),
     })
   }
@@ -246,6 +261,30 @@ impl UDPListener {
       "Not a multicast address",
     ))
   }
+
+  pub fn read_buf(&mut self, entry: io_uring::cqueue::Entry) -> Option<&[u8]> {
+    let Some(buf) = self.recv_buf.as_mut() else {
+      return None;
+    };
+
+    unsafe {
+      buf.advance(1);
+    }
+
+    if entry.result() < 0 {
+      let err = std::io::Error::from_raw_os_error(-entry.result());
+      panic!("err: {err:?}");
+      //TODO: we need to reset the multishot recv here and just return None.
+    }
+
+    let len = entry.result() as _;
+
+    let id = buf.buffer_id_from_cqe_flags(entry.flags())?;
+    let read_buf = unsafe { buf.read_buffer(id) };
+
+    let bytes = &read_buf[..len];
+    Some(bytes)
+  }
 }
 
 #[cfg(test)]
@@ -299,5 +338,42 @@ mod tests {
 
     assert_eq!(rec_data.len(), 3);
     assert_eq!(rec_data, data);
+  }
+}
+#[cfg(feature = "io-uring")]
+use io_uring::{
+  opcode::RecvMulti,
+  types::{BufRing, Fd},
+  IoUring,
+};
+#[cfg(feature = "io-uring")]
+impl crate::network::util::Register for UDPListener {
+  fn register_io_uring(
+    &mut self,
+    ring: &mut IoUring,
+    udata: u64,
+    idx: &mut u16,
+  ) -> std::io::Result<()> {
+    let mut buf = BufRing::new(16, MAX_MESSAGE_SIZE as _, *idx).unwrap();
+    buf.init();
+    ring.submitter().register_buffer_ring(&buf)?;
+
+    buf.init_buffers();
+
+    use std::os::fd::AsRawFd;
+    let fd = self.socket.as_raw_fd();
+    let recv_multi = RecvMulti::new(Fd(fd), buf.bgid()).build().user_data(udata);
+
+    self.recv_buf = Some(buf);
+
+    unsafe {
+      ring.submission().push(&recv_multi).unwrap();
+    }
+
+    ring.submitter().submit()?;
+
+    *idx += 1;
+
+    Ok(())
   }
 }

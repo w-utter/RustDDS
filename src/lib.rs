@@ -1,3 +1,5 @@
+//TODO: remove this
+#![allow(warnings)]
 //! A pure Rust implementation of Data Distribution Service (DDS).
 //!
 //! DDS is an object-oriented API [specified](https://www.omg.org/spec/DDS/) by
@@ -173,6 +175,8 @@ mod checked_impl;
 pub mod discovery; // to access some Discovered data in e.g. ros2-client crate
 mod messages;
 mod network;
+#[cfg(feature = "io-uring")]
+pub use network::util::Register;
 mod rtps;
 
 #[cfg(feature = "security")]
@@ -194,6 +198,7 @@ mod mio_source;
 pub mod dds; // this is public, but not advertised
 
 #[deprecated(since = "0.8.5", note = "Use crate ros2-client instead.")]
+#[cfg(not(feature = "io-uring"))]
 pub mod ros2;
 /// Helpers for (De)serialization and definitions of (De)serializer adapters
 pub mod serialization;
