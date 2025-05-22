@@ -81,7 +81,7 @@ fn main() {
             match r{
               Ok(d)=>{println!("{}", d.value().a)},
               Err(e)=> {
-                println!("{:?}", e);
+                println!("{e:?}");
                 break;
               }
             }

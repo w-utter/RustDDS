@@ -228,8 +228,7 @@ impl ParticipantAccessControl for AccessControlBuiltin {
 
     let remote_identity_certificate = Certificate::from_pem(remote_cert_bytes).map_err(|e| {
       security_error(&format!(
-        "Could not parse remote identity certificate from data: {:?}",
-        e
+        "Could not parse remote identity certificate from data: {e:?}"
       ))
     })?;
 
@@ -246,8 +245,7 @@ impl ParticipantAccessControl for AccessControlBuiltin {
     // Parse to signed document
     let signed_permissions = SignedDocument::from_bytes(remote_permissions_bytes).map_err(|e| {
       security_error(&format!(
-        "Could not parse signed document from permissions data: {:?}",
-        e
+        "Could not parse signed document from permissions data: {e:?}"
       ))
     })?;
 
@@ -256,8 +254,7 @@ impl ParticipantAccessControl for AccessControlBuiltin {
       .verify_signature(permissions_ca_certificate)
       .map_err(|e| {
         security_error(&format!(
-          "Could not verify signature on remote permissions document: {}",
-          e
+          "Could not verify signature on remote permissions document: {e}"
         ))
       })?;
 
@@ -265,7 +262,7 @@ impl ParticipantAccessControl for AccessControlBuiltin {
     let remote_domain_participant_permissions = DomainParticipantPermissions::from_xml(
       &String::from_utf8_lossy(permissions_xml_content.as_ref()),
     )
-    .map_err(|e| security_error(&format!("Could not parse permissions from XML: {:?}", e)))?;
+    .map_err(|e| security_error(&format!("Could not parse permissions from XML: {e:?}")))?;
 
     // Check the subject name in the identity certificate matches the one from the
     // permissions document.

@@ -160,8 +160,7 @@ impl SignedDocument {
       return Err(
         pkcs7_config_error(format!(
           "Contents hash in signature does not match actual content.\nsignature: \
-           {:02x?}\ncontent: {:02x?}",
-          content_hash_in_signature, computed_contents_digest
+           {content_hash_in_signature:02x?}\ncontent: {computed_contents_digest:02x?}"
         ))
         .into(),
       );

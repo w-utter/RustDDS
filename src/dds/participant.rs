@@ -1112,7 +1112,7 @@ impl DomainParticipantInner {
     let disc_db_clone = discovery_db.clone();
     let security_plugins_clone = security_plugins_handle.clone();
     let ev_loop_handle = thread::Builder::new()
-      .name(format!("RustDDS Participant {} event loop", participant_id))
+      .name(format!("RustDDS Participant {participant_id} event loop"))
       .spawn(move || {
         let dp_event_loop = DPEventLoop::new(
           domain_info_clone,

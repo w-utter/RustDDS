@@ -76,8 +76,7 @@ impl Certificate {
       Some(SignatureAlgorithm::RsaSha256) => Ok(Bytes::from_static(RSA_SIGNATURE_ALGO_NAME)),
       Some(SignatureAlgorithm::EcdsaSha256) => Ok(Bytes::from_static(ECDSA_SIGNATURE_ALGO_NAME)),
       Some(x) => Err(security_error(&format!(
-        "Certificate has out-of-spec signature algorithm {:?}",
-        x
+        "Certificate has out-of-spec signature algorithm {x:?}"
       ))),
     }
   }
@@ -219,6 +218,6 @@ iHhbVPRB9Uxts9CwglxYgZoUdGUAxreYIIaLO4yLqw==
 
     let cert = Certificate::from_pem(cert_pem).unwrap();
 
-    println!("{:?}", cert);
+    println!("{cert:?}");
   }
 }

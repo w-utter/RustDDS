@@ -446,7 +446,7 @@ impl Authentication for AuthenticationBuiltin {
     ];
     let hash_c1 = Sha256::hash(
       &to_vec::<Vec<BinaryProperty>, BigEndian>(&c_properties).map_err(|e| SecurityError {
-        msg: format!("Error serializing C1: {}", e),
+        msg: format!("Error serializing C1: {e}"),
       })?,
     );
 
@@ -575,7 +575,7 @@ impl Authentication for AuthenticationBuiltin {
     ];
     let computed_c1_hash = Sha256::hash(
       &to_vec::<Vec<BinaryProperty>, BigEndian>(&c_properties).map_err(|e| SecurityError {
-        msg: format!("Error serializing C1: {}", e),
+        msg: format!("Error serializing C1: {e}"),
       })?,
     );
 
@@ -615,7 +615,7 @@ impl Authentication for AuthenticationBuiltin {
     ];
     let c2_hash = Sha256::hash(
       &to_vec::<Vec<BinaryProperty>, BigEndian>(&c2_properties).map_err(|e| SecurityError {
-        msg: format!("Error serializing C2: {}", e),
+        msg: format!("Error serializing C2: {e}"),
       })?,
     );
 
@@ -635,7 +635,7 @@ impl Authentication for AuthenticationBuiltin {
 
     let contents_signature = local_info.id_cert_private_key.sign(
       &to_vec::<Vec<BinaryProperty>, BigEndian>(&cc2_properties).map_err(|e| SecurityError {
-        msg: format!("Error serializing CC2: {}", e),
+        msg: format!("Error serializing CC2: {e}"),
       })?,
     )?;
 
@@ -773,7 +773,7 @@ impl Authentication for AuthenticationBuiltin {
         ];
         let c2_hash_recomputed = Sha256::hash(
           &to_vec::<Vec<BinaryProperty>, BigEndian>(&c2_properties).map_err(|e| SecurityError {
-            msg: format!("Error serializing C2: {}", e),
+            msg: format!("Error serializing C2: {e}"),
           })?,
         );
 
@@ -819,7 +819,7 @@ impl Authentication for AuthenticationBuiltin {
         // Verify "C2" contents against reply.signature and 2's public key
         cert2.verify_signed_data_with_algorithm(
           to_vec::<Vec<BinaryProperty>, BigEndian>(&cc2_properties).map_err(|e| SecurityError {
-            msg: format!("Error serializing CC2: {}", e),
+            msg: format!("Error serializing CC2: {e}"),
           })?,
           reply.signature,
           c2_signature_algorithm,
@@ -861,7 +861,7 @@ impl Authentication for AuthenticationBuiltin {
         let final_contents_signature = local_info.id_cert_private_key.sign(
           &to_vec::<Vec<BinaryProperty>, BigEndian>(&cc_final_properties).map_err(|e| {
             SecurityError {
-              msg: format!("Error serializing CC_final: {}", e),
+              msg: format!("Error serializing CC_final: {e}"),
             }
           })?,
         )?;
@@ -995,7 +995,7 @@ impl Authentication for AuthenticationBuiltin {
           .verify_signed_data_with_algorithm(
             to_vec::<Vec<BinaryProperty>, BigEndian>(&cc_final_properties).map_err(|e| {
               SecurityError {
-                msg: format!("Error serializing CC_final: {}", e),
+                msg: format!("Error serializing CC_final: {e}"),
               }
             })?,
             final_token.signature,

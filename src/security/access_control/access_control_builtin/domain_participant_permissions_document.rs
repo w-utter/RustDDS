@@ -126,8 +126,7 @@ impl Grant {
       ) => {
         let subject_name =
           DistinguishedName::parse(subject_name).map_err(to_config_error_parse(&format!(
-            "Subject Name parsing failed. input was '{}'",
-            subject_name
+            "Subject Name parsing failed. input was '{subject_name}'"
           )))?;
 
         let rules: Result<Vec<Rule>, ConfigError> = rules.iter().map(Rule::from_xml).collect();
@@ -177,9 +176,8 @@ impl Grant {
       })
       .map_err(|e| {
         parse_config_error(format!(
-          "DateTime parse error: {:?} . Input was \"{}\". Expected \
-           YYYY-MM-ddTHH:MM:ss[|Z|(+|-)hh:mm]",
-          e, time_str
+          "DateTime parse error: {e:?} . Input was \"{time_str}\". Expected \
+           YYYY-MM-ddTHH:MM:ss[|Z|(+|-)hh:mm]"
         ))
       })
   }
@@ -748,7 +746,7 @@ mod tests {
 
     // Test full parse
     let dpd = DomainParticipantPermissions::from_xml(domain_participant_permissions_xml).unwrap();
-    println!("{:?}", dpd);
+    println!("{dpd:?}");
   }
 
   #[test]
@@ -781,7 +779,7 @@ mod tests {
 
     // Test full parse
     let dpd = DomainParticipantPermissions::from_xml(domain_participant_permissions_xml).unwrap();
-    println!("{:?}\n", dpd);
+    println!("{dpd:?}\n");
 
     let grant = dpd.find_grant(
       &DistinguishedName::parse("CN=some_subject").unwrap(),
@@ -790,6 +788,6 @@ mod tests {
 
     assert!(grant.is_some());
 
-    println!("{:?}", grant);
+    println!("{grant:?}");
   }
 }

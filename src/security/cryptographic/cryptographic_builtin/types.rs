@@ -59,10 +59,7 @@ impl TryFrom<CryptoToken> for BuiltinCryptoToken {
       }),
 
       (cid, _, _) => Err(Self::Error {
-        msg: format!(
-          "CryptoToken has wrong class_id. Expected {}, got {}",
-          CRYPTO_TOKEN_CLASS_ID, cid
-        ),
+        msg: format!("CryptoToken has wrong class_id. Expected {CRYPTO_TOKEN_CLASS_ID}, got {cid}"),
       }),
     }
   }
@@ -369,7 +366,7 @@ impl TryFrom<&[u8]> for BuiltinCryptoFooter {
     BuiltinCryptoFooter::deserialize(&mut CdrDeserializer::<BigEndian>::new(data)).map_err(
       // Map deserialization error to SecurityError
       |e| Self::Error {
-        msg: format!("Error deserializing BuiltinCryptoFooter: {}", e),
+        msg: format!("Error deserializing BuiltinCryptoFooter: {e}"),
       },
     )
   }
@@ -385,7 +382,7 @@ impl TryFrom<BuiltinCryptoFooter> for Vec<u8> {
   fn try_from(value: BuiltinCryptoFooter) -> Result<Self, Self::Error> {
     // Serialize
     to_vec::<BuiltinCryptoFooter, BigEndian>(&value).map_err(|e| Self::Error {
-      msg: format!("Error serializing BuiltinCryptoFooter: {}", e),
+      msg: format!("Error serializing BuiltinCryptoFooter: {e}"),
     })
   }
 }

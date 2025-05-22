@@ -181,10 +181,7 @@ where
         // This is a symptom that the receive timestamps are not unique identifiers like they are
         // supposed to be.
         |_already_existed| {
-          panic!(
-            "Tried to add duplicate datasample with the same key {:?}",
-            receive_timestamp
-          );
+          panic!("Tried to add duplicate datasample with the same key {receive_timestamp:?}");
         },
       );
 

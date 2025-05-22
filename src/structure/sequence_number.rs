@@ -460,7 +460,7 @@ where
       // and "8.3.5.7 FragmentNumberSet"
       //
       // Without this chek the addition operation below could overflow.
-      Err(speedy::Error::custom(format!("NumberSet size too large: {} > 256.", num_bits)).into())
+      Err(speedy::Error::custom(format!("NumberSet size too large: {num_bits} > 256.")).into())
     } else {
       let word_count = num_bits.div_ceil(32);
       let mut bitmap: Vec<u32> = Vec::with_capacity(word_count as usize);

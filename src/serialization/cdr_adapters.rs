@@ -279,8 +279,7 @@ where
     }
 
     repr_id => Err(Error::Message(format!(
-      "Unknown serialization format. requested={:?}.",
-      repr_id
+      "Unknown serialization format. requested={repr_id:?}."
     ))),
   }
 }

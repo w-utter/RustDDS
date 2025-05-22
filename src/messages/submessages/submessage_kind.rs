@@ -55,7 +55,7 @@ impl Debug for SubmessageKind {
       Self::SEC_POSTFIX => fmt.write_str("SEC_POSTFIX"),
       Self::SRTPS_PREFIX => fmt.write_str("SRTPS_PREFIX"),
       Self::SRTPS_POSTFIX => fmt.write_str("SRTPS_POSTFIX"),
-      Self { value: other } => fmt.write_fmt(format_args!("SubmessageKind {} (UNKNOWN!)", other)),
+      Self { value: other } => fmt.write_fmt(format_args!("SubmessageKind {other} (UNKNOWN!)")),
     }
   }
 }

@@ -145,7 +145,7 @@ impl DomainParticipantSecurityConfigFiles {
           // for example
           // pkcs11:object=my_private_key_name?pin-value=OpenSesame&module-path=/usr/lib/
           // libhsm.so
-          let mut pkcs11_uri = format!("pkcs11:object={}", token_label);
+          let mut pkcs11_uri = format!("pkcs11:object={token_label}");
           if let Some(pin) = token_pin {
             pkcs11_uri.push_str(&format!(
               "?pin-value={}&module-path={}",
@@ -277,19 +277,19 @@ impl From<cryptoki::error::Error> for ConfigError {
 pub(crate) fn to_config_error_other<E: Debug + 'static>(
   text: &str,
 ) -> impl FnOnce(E) -> ConfigError + '_ {
-  move |e: E| ConfigError::Other(format!("{}: {:?}", text, e))
+  move |e: E| ConfigError::Other(format!("{text}: {e:?}"))
 }
 
 pub(crate) fn to_config_error_pkcs7<E: Debug + 'static>(
   text: &str,
 ) -> impl FnOnce(E) -> ConfigError + '_ {
-  move |e: E| ConfigError::Pkcs7(format!("{}: {:?}", text, e))
+  move |e: E| ConfigError::Pkcs7(format!("{text}: {e:?}"))
 }
 
 pub(crate) fn to_config_error_parse<E: Debug + 'static>(
   text: &str,
 ) -> impl FnOnce(E) -> ConfigError + '_ {
-  move |e: E| ConfigError::Parse(format!("{}: {:?}", text, e))
+  move |e: E| ConfigError::Parse(format!("{text}: {e:?}"))
 }
 
 pub(crate) fn parse_config_error(text: String) -> ConfigError {

@@ -162,10 +162,7 @@ impl DataFrag {
     if octets_to_inline_qos < rtps_v25_header_size {
       return Err(io::Error::new(
         io::ErrorKind::Other,
-        format!(
-          "DataFrag has too low octetsToInlineQos = {}",
-          octets_to_inline_qos
-        ),
+        format!("DataFrag has too low octetsToInlineQos = {octets_to_inline_qos}"),
       ));
     }
     // condition to avoid subtract overflow
@@ -216,9 +213,8 @@ impl DataFrag {
       return Err(io::Error::new(
         io::ErrorKind::Other,
         format!(
-          "Invalid DataFrag. fragment_size={} data_size={}  Expected 1 <= fragment_size <= \
-           data_size.",
-          fragment_size, data_size
+          "Invalid DataFrag. fragment_size={fragment_size} data_size={data_size}  Expected 1 <= \
+           fragment_size <= data_size."
         ),
       ));
     }
@@ -246,9 +242,9 @@ impl DataFrag {
       return Err(io::Error::new(
         io::ErrorKind::Other,
         format!(
-          "DataFrag fragmentStartingNum={:?} expected_total={:?}.  Expected 1 <= \
-           fragmentStartingNum <= expected_total.  Discarding as invalid.",
-          fragment_starting_num, expected_total
+          "DataFrag fragmentStartingNum={fragment_starting_num:?} \
+           expected_total={expected_total:?}.  Expected 1 <= fragmentStartingNum <= \
+           expected_total.  Discarding as invalid."
         ),
       ));
     }

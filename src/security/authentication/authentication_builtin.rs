@@ -278,6 +278,6 @@ impl AuthenticationBuiltin {
   fn generate_random_32_bytes(&self) -> SecurityResult<[u8; 32]> {
     ring::rand::generate::<[u8; 32]>(&self.secure_random_generator)
       .map(|random| random.expose())
-      .map_err(|e| security_error(&format!("Failed to generate random bytes: {}", e)))
+      .map_err(|e| security_error(&format!("Failed to generate random bytes: {e}")))
   }
 }

@@ -305,6 +305,6 @@ EEJPTyIYWQldbZS8GH/4SOMViyWhL/BcSU48V0RidVPvyKqqiLyVaVmk
 
     let key = PrivateKey::from_pem(priv_key_pem).unwrap();
 
-    println!("{:?}", key);
+    println!("{key:?}");
   }
 }

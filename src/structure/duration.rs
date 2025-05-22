@@ -212,7 +212,7 @@ mod tests {
   }
 
   fn fmt_check(d: Duration, s: &str) {
-    assert_eq!(format!("{:?}", d), s);
+    assert_eq!(format!("{d:?}"), s);
   }
 
   #[test]

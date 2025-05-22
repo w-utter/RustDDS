@@ -652,8 +652,7 @@ impl TryFrom<AuthenticatedPeerCredentialToken> for BuiltinAuthenticatedPeerCrede
       prop.value()
     } else {
       return Err(security_error(&format!(
-        "No required {} binary property",
-        AUTHENTICATED_PEER_TOKEN_IDENTITY_CERTIFICATE_PROPERTY_NAME
+        "No required {AUTHENTICATED_PEER_TOKEN_IDENTITY_CERTIFICATE_PROPERTY_NAME} binary property"
       )));
     };
 
@@ -663,8 +662,7 @@ impl TryFrom<AuthenticatedPeerCredentialToken> for BuiltinAuthenticatedPeerCrede
       prop.value()
     } else {
       return Err(security_error(&format!(
-        "No required {} binary property",
-        AUTHENTICATED_PEER_TOKEN_PERMISSIONS_DOCUMENT_PROPERTY_NAME
+        "No required {AUTHENTICATED_PEER_TOKEN_PERMISSIONS_DOCUMENT_PROPERTY_NAME} binary property"
       )));
     };
 

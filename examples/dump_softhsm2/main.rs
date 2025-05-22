@@ -39,7 +39,7 @@ fn main() -> Result<()> {
   println!("Found {} slots.", slots.len());
   for (num, slot) in slots.iter().enumerate() {
     let slot_info = pkcs11client.get_slot_info(*slot);
-    println!("\n{}:\n{:?}", num, slot_info);
+    println!("\n{num}:\n{slot_info:?}");
     match slot_info {
       Ok(si) if si.token_present() => {
         println!("token info: {:?}", pkcs11client.get_token_info(*slot));
@@ -60,7 +60,7 @@ fn main() -> Result<()> {
                       match session.get_attributes(*obj, &interesting_attributes) {
                         Ok(attrs) => {
                           for a in attrs {
-                            println!("    {:?}", a);
+                            println!("    {a:?}");
                           }
                         }
                         Err(e) => println!("{e:?}"),

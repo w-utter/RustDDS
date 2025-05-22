@@ -183,8 +183,7 @@ where
         D::from_pl_cdr_bytes(input_bytes, encoding)
       }
       repr_id => Err(PlCdrDeserializeError::NotSupported(format!(
-        "Unknown representation identifier {:?}",
-        repr_id
+        "Unknown representation identifier {repr_id:?}"
       ))),
     }
   }
@@ -205,8 +204,7 @@ where
         DecKey::from_pl_cdr_bytes(input_bytes, encoding)
       }
       repr_id => Err(PlCdrDeserializeError::NotSupported(format!(
-        "Unknown (key) representation identifier {:?}",
-        repr_id
+        "Unknown (key) representation identifier {repr_id:?}"
       ))),
     }
   }

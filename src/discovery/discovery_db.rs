@@ -106,7 +106,7 @@ pub(crate) fn discovery_db_read(
 ) -> RwLockReadGuard<DiscoveryDB> {
   match discovery_db.read() {
     Ok(db) => db,
-    Err(e) => panic!("DiscoveryDB is poisoned {:?}.", e),
+    Err(e) => panic!("DiscoveryDB is poisoned {e:?}."),
   }
 }
 
@@ -115,7 +115,7 @@ pub(crate) fn discovery_db_write(
 ) -> RwLockWriteGuard<DiscoveryDB> {
   match discovery_db.write() {
     Ok(db) => db,
-    Err(e) => panic!("DiscoveryDB is poisoned {:?}.", e),
+    Err(e) => panic!("DiscoveryDB is poisoned {e:?}."),
   }
 }
 
@@ -699,7 +699,7 @@ impl DiscoveryDB {
       .topics
       .iter()
       .filter(|(s, _)| !s.starts_with("DCPS"))
-      .flat_map(|(_, gm)| gm.iter().map(|(_, dtd)| &dtd.1))
+      .flat_map(|(_, gm)| gm.values().map(|dtd| &dtd.1))
   }
 
   // a Topic may have multiple definitions, because there may be multiple

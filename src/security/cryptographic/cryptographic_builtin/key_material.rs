@@ -37,7 +37,7 @@ impl TryFrom<Bytes> for KeyMaterial_AES_GCM_GMAC {
     .map_err(
       // Map deserialization error to SecurityError
       |e| Self::Error {
-        msg: format!("Error deserializing KeyMaterial_AES_GCM_GMAC: {}", e),
+        msg: format!("Error deserializing KeyMaterial_AES_GCM_GMAC: {e}"),
       },
     )
     .and_then(KeyMaterial_AES_GCM_GMAC::try_from)
@@ -52,7 +52,7 @@ impl TryFrom<KeyMaterial_AES_GCM_GMAC> for Bytes {
     to_vec::<Serializable_KeyMaterial_AES_GCM_GMAC, BigEndian>(&serializable_key_material)
       .map(Bytes::from)
       .map_err(|e| Self::Error {
-        msg: format!("Error serializing KeyMaterial_AES_GCM_GMAC: {}", e),
+        msg: format!("Error serializing KeyMaterial_AES_GCM_GMAC: {e}"),
       })
   }
 }
@@ -180,7 +180,7 @@ impl TryFrom<Bytes> for KeyMaterial_AES_GCM_GMAC_seq {
     .map_err(
       // Map deserialization error to SecurityError
       |e| Self::Error {
-        msg: format!("Error deserializing Vec<KeyMaterial_AES_GCM_GMAC>: {}", e),
+        msg: format!("Error deserializing Vec<KeyMaterial_AES_GCM_GMAC>: {e}"),
       },
     )?;
 
@@ -210,7 +210,7 @@ impl TryFrom<KeyMaterial_AES_GCM_GMAC_seq> for Bytes {
     to_vec::<Vec<Serializable_KeyMaterial_AES_GCM_GMAC>, BigEndian>(&serializable_key_materials)
       .map(Bytes::from)
       .map_err(|e| Self::Error {
-        msg: format!("Error serializing KeyMaterial_AES_GCM_GMAC_seq: {}", e),
+        msg: format!("Error serializing KeyMaterial_AES_GCM_GMAC_seq: {e}"),
       })
   }
 }
