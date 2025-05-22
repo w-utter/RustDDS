@@ -1,4 +1,4 @@
-use std::{io, marker::PhantomData};
+use std::{any::TypeId, io, marker::PhantomData};
 
 use serde::{
   de::{Deserialize, DeserializeOwned, DeserializeSeed},
@@ -34,12 +34,22 @@ where
 impl<D, BO> no_key::SerializerAdapter<D> for CDRSerializerAdapter<D, BO>
 where
   D: Serialize,
-  BO: ByteOrder,
+  BO: ByteOrder + 'static,
 {
   type Error = Error;
 
   fn output_encoding() -> RepresentationIdentifier {
-    RepresentationIdentifier::CDR_LE
+    if TypeId::of::<BO>() == TypeId::of::<LittleEndian>() {
+      RepresentationIdentifier::CDR_LE
+    } else if TypeId::of::<BO>() == TypeId::of::<BigEndian>() {
+      RepresentationIdentifier::CDR_BE
+    } else {
+      // The trait ByteOrder is sealed, so there are no implementations
+      // outside the byteorder package, which defines only LittleEndian
+      // and BigEndian impls.
+      // If you end up here, please explain how did you find a third implementation.
+      unreachable!()
+    }
   }
 
   fn to_bytes(value: &D) -> Result<Bytes> {
@@ -54,7 +64,7 @@ impl<D, BO> with_key::SerializerAdapter<D> for CDRSerializerAdapter<D, BO>
 where
   D: Keyed + Serialize,
   <D as Keyed>::K: Serialize,
-  BO: ByteOrder,
+  BO: ByteOrder + 'static,
 {
   fn key_to_bytes(value: &D::K) -> Result<Bytes> {
     let size_estimate = std::mem::size_of_val(value) * 2; // TODO: crude estimate
