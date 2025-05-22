@@ -257,10 +257,7 @@ impl TopicCache {
         // If this happens, cache changes were created at exactly same instant.
         // This is bad, since we are using instants as keys and assume that they
         // are unique.
-        error!(
-          "DDSHistoryCache already contained element with key {:?} !!!",
-          instant
-        );
+        error!("DDSHistoryCache already contained element with key {instant:?} !!!");
         self.remove_sn(&old_cc);
         old_cc
       })

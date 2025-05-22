@@ -36,10 +36,7 @@ impl AssemblyBuffer {
     let data_size: usize = datafrag.data_size.try_into().unwrap();
     // We have unwrap here, but it will succeed as long as usize >= u32.
     let fragment_size: u16 = datafrag.fragment_size;
-    debug!(
-      "new AssemblyBuffer data_size={} frag_size={}",
-      data_size, fragment_size
-    );
+    debug!("new AssemblyBuffer data_size={data_size} frag_size={fragment_size}");
 
     assert!(fragment_size as usize <= data_size); // This is validated at DataFrag deserializer
     assert!(fragment_size > 0); // This is validated at DataFrag deserializer
@@ -120,10 +117,7 @@ impl AssemblyBuffer {
       );
     }
 
-    debug!(
-      "insert_frags: from_byte = {:?}, to_before_byte = {:?}",
-      from_byte, to_before_byte
-    );
+    debug!("insert_frags: from_byte = {from_byte:?}, to_before_byte = {to_before_byte:?}");
 
     debug!(
       "insert_frags: dataFrag.serializedPayload.len = {:?}",
@@ -161,7 +155,7 @@ impl fmt::Debug for FragmentAssembler {
 
 impl FragmentAssembler {
   pub fn new(fragment_size: u16) -> Self {
-    debug!("new FragmentAssembler. frag_size = {}", fragment_size);
+    debug!("new FragmentAssembler. frag_size = {fragment_size}");
     Self {
       fragment_size,
       assembly_buffers: BTreeMap::new(),

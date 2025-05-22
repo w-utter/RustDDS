@@ -381,7 +381,7 @@ impl EntityId {
     if kind_kind == 0xC0 || kind_kind == 0x00 {
       // this is ok, all normal
     } else {
-      warn!("EntityId::from_usize tried to decode 0x{:x?}", number);
+      warn!("EntityId::from_usize tried to decode 0x{number:x?}");
     }
 
     result

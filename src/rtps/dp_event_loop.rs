@@ -489,7 +489,7 @@ impl DPEventLoop {
           self.remove_local_writer(writer_guid);
         }
       }
-      other => error!("Expected writer action token, got {:?}", other),
+      other => error!("Expected writer action token, got {other:?}"),
     }
   }
 
@@ -500,7 +500,7 @@ impl DPEventLoop {
     if let Some(writer) = self.writers.get_mut(&entity_id) {
       writer.handle_timed_event();
     } else {
-      error!("Writer was not found with {:?}", entity_id);
+      error!("Writer was not found with {entity_id:?}");
     }
   }
 
@@ -508,7 +508,7 @@ impl DPEventLoop {
     if let Some(reader) = self.message_receiver.reader_mut(entity_id) {
       reader.handle_timed_event();
     } else {
-      error!("Reader was not found with {:?}", entity_id);
+      error!("Reader was not found with {entity_id:?}");
     }
   }
 
@@ -531,8 +531,8 @@ impl DPEventLoop {
         // specification, which RustDDS does not implement. So even though the acknack
         // cannot be handled, it is not a problem in this case.
         debug!(
-          "Couldn't handle acknack/nackfrag! Did not find local RTPS writer with GUID: {:x?}",
-          writer_guid
+          "Couldn't handle acknack/nackfrag! Did not find local RTPS writer with GUID: \
+           {writer_guid:x?}"
         );
         continue;
       }
@@ -663,10 +663,7 @@ impl DPEventLoop {
       }
     } // for
 
-    debug!(
-      "update_participant - finished for {:?}",
-      participant_guid_prefix
-    );
+    debug!("update_participant - finished for {participant_guid_prefix:?}");
   }
 
   fn remote_participant_lost(&mut self, participant_guid_prefix: GuidPrefix) {
@@ -754,8 +751,7 @@ impl DPEventLoop {
             ) {
               error!(
                 "Could not signal Secure Discovery to start the key exchange with remote reader \
-                 {:?}. Reason: {}.",
-                remote_reader_guid, e
+                 {remote_reader_guid:?}. Reason: {e}."
               );
             }
             true // match_to_reader
@@ -842,8 +838,7 @@ impl DPEventLoop {
             ) {
               error!(
                 "Could not signal Secure Discovery to start the key exchange with remote writer \
-                 {:?}. Reason: {}.",
-                remote_writer_guid, e
+                 {remote_writer_guid:?}. Reason: {e}."
               );
             }
             true // match_to_writer
@@ -902,7 +897,7 @@ impl DPEventLoop {
       .expect("Reader command channel registration failed!!!");
 
     new_reader.set_requested_deadline_check_timer();
-    trace!("Add reader: {:?}", new_reader);
+    trace!("Add reader: {new_reader:?}");
     self.message_receiver.add_reader(new_reader);
   }
 
@@ -1013,9 +1008,8 @@ impl DPEventLoop {
           },
         ) {
           error!(
-            "Could not signal Discovery to start the key exchange with remote. Reason: {}. \
-             Remote: {:?}",
-            e, remote_guidp
+            "Could not signal Discovery to start the key exchange with remote. Reason: {e}. \
+             Remote: {remote_guidp:?}"
           );
         }
       }
@@ -1026,14 +1020,13 @@ impl DPEventLoop {
       Some(AuthenticationStatus::Rejected) => {
         // TODO: disconnect endpoints from the participant?
         info!(
-          "Status Rejected in on_remote_participant_authentication_status_changed with {:?}. TODO!",
-          remote_guidp
+          "Status Rejected in on_remote_participant_authentication_status_changed with \
+           {remote_guidp:?}. TODO!"
         );
       }
       other => {
         info!(
-          "Status {:?}, in on_remote_participant_authentication_status_changed. What to do?",
-          other
+          "Status {other:?}, in on_remote_participant_authentication_status_changed. What to do?"
         );
       }
     }

@@ -160,7 +160,7 @@ pub trait Key:
     */
 
     let mut cdr_bytes = to_vec::<Self, BigEndian>(self).unwrap_or_else(|e| {
-      error!("Hashing key {:?} failed!", e);
+      error!("Hashing key {e:?} failed!");
       // This would cause a lot of hash collisions, but wht else we could do
       // if the key cannot be serialized? Are there any realistic conditions
       // this could even occur?

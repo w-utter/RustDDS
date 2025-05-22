@@ -993,7 +993,7 @@ impl Writer {
 
         // sanity check requested sequence numbers
         if let Some(0) = an.reader_sn_state.iter().next().map(i64::from) {
-          warn!("Request for SN zero! : {:?}", an);
+          warn!("Request for SN zero! : {an:?}");
         }
 
         let reader_guid = GUID::new(reader_guid_prefix, an.reader_id);
@@ -1152,7 +1152,7 @@ impl Writer {
         .insert(reader_proxy.remote_reader_guid, reader_proxy)
       {
         // This should really not happen.
-        error!("Reader proxy was duplicated somehow??? {:?}", rp);
+        error!("Reader proxy was duplicated somehow??? {rp:?}");
       }
     }
   }
@@ -1175,7 +1175,7 @@ impl Writer {
         .insert(reader_proxy.remote_reader_guid, reader_proxy)
       {
         // this is an internal logic error, or maybe out of memory
-        error!("Reader proxy was duplicated somehow??? (frags) {:?}", rp);
+        error!("Reader proxy was duplicated somehow??? (frags) {rp:?}");
       }
     }
   }
@@ -1542,7 +1542,7 @@ impl Writer {
               send_unless_sent_and_mark!(reader.unicast_locator_list)
             }
             (_delivery_mode, None, None) => {
-              warn!("send_message_to_readers: No locators for {:?}", reader);
+              warn!("send_message_to_readers: No locators for {reader:?}");
             }
           } // match
         }
@@ -1660,7 +1660,7 @@ impl Writer {
         self.topic_name(),
         removed_reader.remote_reader_guid,
       );
-      debug!("Removed reader proxy details: {:?}", removed_reader);
+      debug!("Removed reader proxy details: {removed_reader:?}");
     }
     #[cfg(feature = "security")]
     if let Some(security_plugins_handle) = &self.security_plugins {
@@ -1797,16 +1797,16 @@ mod tests {
     };
 
     let write_result = data_writer.write(data, None);
-    info!("writerResult:  {:?}", write_result);
+    info!("writerResult:  {write_result:?}");
 
     data_writer
       .write(data2, None)
       .expect("Unable to write data");
 
-    info!("writerResult:  {:?}", write_result);
+    info!("writerResult:  {write_result:?}");
     let write_result = data_writer.write(data3, None);
 
     thread::sleep(std::time::Duration::from_millis(100));
-    info!("writerResult:  {:?}", write_result);
+    info!("writerResult:  {write_result:?}");
   }
 }

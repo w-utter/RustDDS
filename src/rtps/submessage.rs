@@ -279,14 +279,11 @@ impl Submessage {
         let kind = u8::from(unknown_kind);
         if kind >= 0x80 {
           // Kinds 0x80 - 0xFF are vendor-specific.
-          trace!(
-            "Received vendor-specific submessage kind {:?}",
-            unknown_kind
-          );
+          trace!("Received vendor-specific submessage kind {unknown_kind:?}");
           trace!("Submessage was {:?}", &sub_buffer);
         } else {
           // Kind is 0x00 - 0x7F, it should be in the standard.
-          error!("Received unknown submessage kind {:?}", unknown_kind);
+          error!("Received unknown submessage kind {unknown_kind:?}");
           debug!("Submessage was {:?}", &sub_buffer);
         }
         Ok(None)
@@ -356,7 +353,7 @@ mod tests {
       body: SubmessageBody::Writer(WriterSubmessage::Data(suba, flags)),
       original_bytes: Some(serialized_data_submessage.clone()),
     };
-    info!("{:?}", sub);
+    info!("{sub:?}");
 
     let message_buffer = sub.write_to_vec().expect("DATA serialization failed");
 
@@ -382,7 +379,7 @@ mod tests {
       body: SubmessageBody::Writer(WriterSubmessage::Heartbeat(suba, flags)),
       original_bytes: Some(serialized_heartbeat_message.clone().into()),
     };
-    info!("{:?}", sub);
+    info!("{sub:?}");
 
     let message_buffer = sub.write_to_vec().expect("serialization failed");
 
@@ -407,7 +404,7 @@ mod tests {
       body: SubmessageBody::Interpreter(InterpreterSubmessage::InfoDestination(suba, flags)),
       original_bytes: Some(serialized_info_dst_message.clone().into()),
     };
-    info!("{:?}", sub);
+    info!("{sub:?}");
 
     let message_buffer = sub.write_to_vec().expect("serialization failed");
 

@@ -187,7 +187,7 @@ impl RtpsReaderProxy {
   fn not_loopback(l: &Locator) -> bool {
     let is_loopback = l.is_loopback();
     if is_loopback {
-      info!("Ignoring loopback address {:?}", l);
+      info!("Ignoring loopback address {l:?}");
     }
 
     !is_loopback

@@ -39,10 +39,7 @@ impl UDPSender {
     let mut multicast_sockets = Vec::with_capacity(1);
     for multicast_if_ipaddr in get_local_multicast_ip_addrs()? {
       // beef: specify output interface
-      trace!(
-        "UDPSender: Multicast sender on interface {:?}",
-        multicast_if_ipaddr
-      );
+      trace!("UDPSender: Multicast sender on interface {multicast_if_ipaddr:?}");
 
       let mc_socket = match multicast_if_ipaddr {
         // ipv4 requires a little more work
@@ -93,7 +90,7 @@ impl UDPSender {
       unicast_socket,
       multicast_sockets,
     };
-    info!("UDPSender::new() --> {:?}", sender);
+    info!("UDPSender::new() --> {sender:?}");
     Ok(sender)
   }
 
@@ -149,13 +146,13 @@ impl UDPSender {
       Locator::UdpV4(socket_address) => send(SocketAddr::from(*socket_address)),
       Locator::UdpV6(socket_address) => send(SocketAddr::from(*socket_address)),
       Locator::Invalid | Locator::Reserved => {
-        error!("send_to_locator: Cannot send to {:?}", locator);
+        error!("send_to_locator: Cannot send to {locator:?}");
       }
       Locator::Other { kind, .. } =>
       // This is normal, as other implementations can define their own kinds.
       // We get those from Discovery.
       {
-        trace!("send_to_locator: Unknown LocatorKind: {:?}", kind);
+        trace!("send_to_locator: Unknown LocatorKind: {kind:?}");
       }
     }
   }

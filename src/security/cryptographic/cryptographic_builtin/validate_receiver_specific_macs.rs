@@ -54,8 +54,7 @@ pub(super) fn validate_receiver_specific_mac(
       )
     } else {
       trace!(
-        "No receiver-specific MAC found for the receiver-specific key id {:?}, rejecting.",
-        key_id
+        "No receiver-specific MAC found for the receiver-specific key id {key_id:?}, rejecting."
       );
       false
     }

@@ -103,20 +103,13 @@ impl Certificate {
         if key_length == RSA_2048_KEY_LENGTH {
           Some(CertificateAlgorithm::RSA2048)
         } else {
-          log::error!(
-            "Wrong RSA key length: expected {}, got {}",
-            RSA_2048_KEY_LENGTH,
-            key_length
-          );
+          log::error!("Wrong RSA key length: expected {RSA_2048_KEY_LENGTH}, got {key_length}");
           None
         }
       }
       Some(KeyAlgorithm::Ecdsa(EcdsaCurve::Secp256r1)) => Some(CertificateAlgorithm::ECPrime256v1),
       _ => {
-        log::error!(
-          "Unknown key algorithm. cert.key_algorithm returned {:?}",
-          key_algorithm
-        );
+        log::error!("Unknown key algorithm. cert.key_algorithm returned {key_algorithm:?}");
         None
       }
     }

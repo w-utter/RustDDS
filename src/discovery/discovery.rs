@@ -919,7 +919,7 @@ impl Discovery {
           }
 
           other_token => {
-            error!("discovery event loop got token: {:?}", other_token);
+            error!("discovery event loop got token: {other_token:?}");
           }
         } // match
       } // for
@@ -1167,7 +1167,7 @@ impl Discovery {
             }
           }
           Sample::Dispose(reader_key) => {
-            info!("Dispose Reader {:?}", reader_key);
+            info!("Dispose Reader {reader_key:?}");
             discovery_db_write(&self.discovery_db).remove_topic_reader(reader_key);
             self.send_discovery_notification(DiscoveryNotificationType::ReaderLost {
               reader_guid: reader_key,
@@ -1241,7 +1241,7 @@ impl Discovery {
               reason: LostReason::Disposed,
             });
 
-            debug!("Disposed Writer {:?}", writer_key);
+            debug!("Disposed Writer {writer_key:?}");
           }
         }
       }
@@ -1426,9 +1426,8 @@ impl Discovery {
       let time_since_last_auto_update =
         timenow.duration_since(self.liveliness_state.last_auto_update);
       trace!(
-        "time_since_last_auto_update: {:?}, min_auto_duration {:?}",
-        time_since_last_auto_update,
-        min_auto_duration
+        "time_since_last_auto_update: {time_since_last_auto_update:?}, min_auto_duration \
+         {min_auto_duration:?}"
       );
 
       // We choose to send a new liveliness message if longer than half of the min
@@ -1629,7 +1628,7 @@ impl Discovery {
             });
           }
           Sample::Dispose(reader_guid) => {
-            info!("Secure Dispose Reader {:?}", reader_guid);
+            info!("Secure Dispose Reader {reader_guid:?}");
             discovery_db_write(&self.discovery_db).remove_topic_reader(reader_guid);
             self.send_discovery_notification(DiscoveryNotificationType::ReaderLost { reader_guid });
             self.send_participant_status(DomainParticipantStatusEvent::ReaderLost {
@@ -1689,7 +1688,7 @@ impl Discovery {
             });
           }
           Sample::Dispose(writer_guid) => {
-            info!("Secure Dispose Writer {:?}", writer_guid);
+            info!("Secure Dispose Writer {writer_guid:?}");
             discovery_db_write(&self.discovery_db).remove_topic_writer(writer_guid);
             self.send_discovery_notification(DiscoveryNotificationType::WriterLost { writer_guid });
             self.send_participant_status(DomainParticipantStatusEvent::WriterLost {
@@ -1721,7 +1720,7 @@ impl Discovery {
   pub fn participant_cleanup(&self) {
     let removed = discovery_db_write(&self.discovery_db).participant_cleanup();
     for (guid_prefix, reason) in removed {
-      debug!("participant cleanup - timeout for {:?}", guid_prefix);
+      debug!("participant cleanup - timeout for {guid_prefix:?}");
       self.send_discovery_notification(DiscoveryNotificationType::ParticipantLost { guid_prefix });
       self.send_participant_status(DomainParticipantStatusEvent::ParticipantLost {
         id: guid_prefix,

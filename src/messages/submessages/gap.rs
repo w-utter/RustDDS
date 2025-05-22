@@ -50,7 +50,7 @@ impl Gap {
     let submessage_len = match self.write_to_vec() {
       Ok(bytes) => bytes.len() as u16,
       Err(e) => {
-        error!("Reader couldn't write GAP to bytes: {}", e);
+        error!("Reader couldn't write GAP to bytes: {e}");
         return None;
       }
     };

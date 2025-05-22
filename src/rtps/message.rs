@@ -599,7 +599,7 @@ mod tests {
       0x5b, 0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00,
     ]);
     let rtps = Message::read_from_buffer(&bits1).unwrap();
-    info!("{:?}", rtps);
+    info!("{rtps:?}");
 
     let serialized = Bytes::from(
       rtps
@@ -669,7 +669,7 @@ mod tests {
     ]);
 
     let rtps = Message::read_from_buffer(&bits1).unwrap();
-    info!("{:?}", rtps);
+    info!("{rtps:?}");
 
     let serialized = Bytes::from(
       rtps
@@ -695,7 +695,7 @@ mod tests {
     ]);
 
     let rtps = Message::read_from_buffer(&bits1).unwrap();
-    info!("{:?}", rtps);
+    info!("{rtps:?}");
 
     let serialized = Bytes::from(
       rtps
@@ -727,7 +727,7 @@ mod tests {
     ]);
 
     let rtps = Message::read_from_buffer(&bits1).unwrap();
-    info!("{:?}", rtps);
+    info!("{rtps:?}");
 
     let serialized = Bytes::from(
       rtps
@@ -771,7 +771,7 @@ mod tests {
     ]);
 
     let rtps = Message::read_from_buffer(&bits1).unwrap();
-    info!("{:?}", rtps);
+    info!("{rtps:?}");
 
     let data_submessage = match &rtps.submessages[2] {
       Submessage {
@@ -783,7 +783,7 @@ mod tests {
     };
 
     let serialized_payload = data_submessage.unwrap_serialized_payload_value().clone();
-    info!("{:x?}", serialized_payload);
+    info!("{serialized_payload:x?}");
 
     let serialized = Bytes::from(
       rtps

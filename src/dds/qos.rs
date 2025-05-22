@@ -339,13 +339,9 @@ impl QosPolicies {
   ///
   /// This is not symmetric.
   pub fn compliance_failure_wrt(&self, other: &Self) -> Option<QosPolicyId> {
-    trace!(
-      "QoS compatibility check - offered: {:?} - requested {:?}",
-      self,
-      other
-    );
+    trace!("QoS compatibility check - offered: {self:?} - requested {other:?}");
     let result = self.compliance_failure_wrt_impl(other);
-    trace!("Result: {:?}", result);
+    trace!("Result: {result:?}");
     result
   }
 

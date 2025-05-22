@@ -144,10 +144,7 @@ impl RtpsWriterProxy {
     // Need to verify first <= last, or BTreeMap::range will crash
     if hb_first_sn > hb_last_sn {
       if hb_first_sn > hb_last_sn + SequenceNumber::from(1) {
-        warn!(
-          "Negative range of missing_seqnums first={:?} last={:?}",
-          hb_first_sn, hb_last_sn
-        );
+        warn!("Negative range of missing_seqnums first={hb_first_sn:?} last={hb_last_sn:?}");
       } else {
         // first == last+1
         // This is normal. See RTPS 2.5 Spec Section "8.3.8.6.3 Validity"
@@ -246,8 +243,8 @@ impl RtpsWriterProxy {
     // check sanity
     if remove_from > remove_until_before {
       error!(
-        "irrelevant_changes_range: negative range: remove_from={:?} remove_until_before={:?}",
-        remove_from, remove_until_before
+        "irrelevant_changes_range: negative range: remove_from={remove_from:?} \
+         remove_until_before={remove_until_before:?}"
       );
       return;
     }

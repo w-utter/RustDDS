@@ -1021,7 +1021,7 @@ impl DomainParticipantInner {
       }
     }
 
-    info!("ParticipantId {} selected.", participant_id);
+    info!("ParticipantId {participant_id} selected.");
 
     // here discovery_listener is redefined (shadowed)
     let discovery_listener = match discovery_listener {
@@ -1070,7 +1070,7 @@ impl DomainParticipantInner {
       .map(|(t, l)| match l.to_locator_address() {
         Ok(locs) => (*t, locs),
         Err(e) => {
-          error!("No local network address for token {:?}: {:?}", t, e);
+          error!("No local network address for token {t:?}: {e:?}");
           (*t, vec![])
         }
       })
@@ -1152,9 +1152,8 @@ impl DomainParticipantInner {
     let have_security = false;
 
     info!(
-      "New DomainParticipantInner: domain_id={:?} participant_id={:?} GUID={:?} \
-       security_feature_enabled={}",
-      domain_id, participant_id, participant_guid, have_security,
+      "New DomainParticipantInner: domain_id={domain_id:?} participant_id={participant_id:?} \
+       GUID={participant_guid:?} security_feature_enabled={have_security}",
     );
 
     Ok(Self {
@@ -1562,7 +1561,7 @@ mod tests {
     m.set_header(h);
     m.add_submessage(s);
     let _data: Vec<u8> = m.write_to_vec_with_ctx(Endianness::LittleEndian).unwrap();
-    info!("data to send via udp: {:?}", _data);
+    info!("data to send via udp: {_data:?}");
     let ip = Ipv4Addr::from([0x00, 0x00, 0x00, 0x00]);
     let socket_address = SocketAddrV4::new(ip, port_number);
     let locators = vec![Locator::UdpV4(socket_address)];

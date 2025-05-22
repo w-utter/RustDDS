@@ -132,10 +132,7 @@ where
       Err(mio_channel::SendError::Disconnected(_)) => {
         debug!("Failed to send DiscoveryCommand::RemoveLocalReader . Maybe shutting down?");
       }
-      Err(e) => error!(
-        "Failed to send DiscoveryCommand::RemoveLocalReader. {:?}",
-        e
-      ),
+      Err(e) => error!("Failed to send DiscoveryCommand::RemoveLocalReader. {e:?}"),
     }
   }
 }

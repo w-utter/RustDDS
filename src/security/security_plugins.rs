@@ -157,8 +157,7 @@ impl SecurityPlugins {
       .remove(guid_prefix)
       .or_else(|| {
         debug!(
-          "Could not find a ParticipantCryptoHandle to remove for the GuidPrefix {:?}",
-          guid_prefix,
+          "Could not find a ParticipantCryptoHandle to remove for the GuidPrefix {guid_prefix:?}",
         );
         None
       })
@@ -183,10 +182,7 @@ impl SecurityPlugins {
       .remove(guid)
       .or_else(|| {
         if !self.submessage_not_protected(guid) || !self.payload_not_protected(guid) {
-          error!(
-            "Could not find a local EndpointCryptoHandle to remove for the GUID {:?}",
-            guid
-          );
+          error!("Could not find a local EndpointCryptoHandle to remove for the GUID {guid:?}");
         }
         None
       })
@@ -200,8 +196,7 @@ impl SecurityPlugins {
     let old_opt = self.identity_handle_cache.insert(participant_guidp, handle);
     if let Some(old) = old_opt {
       debug!(
-        "Replaced IdentityHandle for guid prefix {:?}. Old: {}, new: {}",
-        participant_guidp, old, handle
+        "Replaced IdentityHandle for guid prefix {participant_guidp:?}. Old: {old}, new: {handle}"
       );
     }
   }
@@ -216,8 +211,8 @@ impl SecurityPlugins {
       .insert(participant_guidp, handle);
     if let Some(old) = old_opt {
       debug!(
-        "Replaced PermissionsHandle for guid prefix {:?}. Old: {}, new: {}",
-        participant_guidp, old, handle
+        "Replaced PermissionsHandle for guid prefix {participant_guidp:?}. Old: {old}, new: \
+         {handle}"
       );
     }
   }
@@ -232,8 +227,8 @@ impl SecurityPlugins {
       .insert(participant_guidp, handle);
     if let Some(old) = old_opt {
       debug!(
-        "Replaced ParticipantCryptoHandle for guid prefix {:?}. Old: {}, new: {}",
-        participant_guidp, old, handle
+        "Replaced ParticipantCryptoHandle for guid prefix {participant_guidp:?}. Old: {old}, new: \
+         {handle}"
       );
     }
   }
@@ -284,8 +279,7 @@ impl SecurityPlugins {
         {
           error!(
             "Could not find a remote EndpointCryptoHandle to remove for the (local_endpoint_guid, \
-             proxy_guid) pair {:?}",
-            local_and_proxy_guid_pair
+             proxy_guid) pair {local_and_proxy_guid_pair:?}"
           );
         }
         None
@@ -303,8 +297,8 @@ impl SecurityPlugins {
       .insert(local_and_remote_guid_pair, handle);
     if let Some(old) = old_opt {
       debug!(
-        "Replaced EndpointCryptoHandle for guid pair {:?}. Old: {}, new: {}",
-        local_and_remote_guid_pair, old, handle
+        "Replaced EndpointCryptoHandle for guid pair {local_and_remote_guid_pair:?}. Old: {old}, \
+         new: {handle}"
       );
     }
   }

@@ -527,7 +527,7 @@ impl InnerPublisher {
           guid
         );
       } else {
-        info!("Registered local writer to crypto plugin. GUID: {:?}", guid);
+        info!("Registered local writer to crypto plugin. GUID: {guid:?}");
       }
     }
 
@@ -675,7 +675,7 @@ impl InnerPublisher {
 
   pub(crate) fn remove_writer(&self, guid: GUID) {
     try_send_timeout(&self.remove_writer_sender, guid, None)
-      .unwrap_or_else(|e| error!("Cannot remove Writer {:?} : {:?}", guid, e));
+      .unwrap_or_else(|e| error!("Cannot remove Writer {guid:?} : {e:?}"));
   }
 
   pub(crate) fn identity(&self) -> EntityId {
@@ -1105,10 +1105,7 @@ impl InnerSubscriber {
           reader_guid
         );
       } else {
-        info!(
-          "Registered local reader to crypto plugin. GUID: {:?}",
-          reader_guid
-        );
+        info!("Registered local reader to crypto plugin. GUID: {reader_guid:?}");
       }
     }
 
@@ -1297,7 +1294,7 @@ impl InnerSubscriber {
 
   pub(crate) fn remove_reader(&self, guid: GUID) {
     try_send_timeout(&self.sender_remove_reader, guid, None)
-      .unwrap_or_else(|e| error!("Cannot remove Reader {:?} : {:?}", guid, e));
+      .unwrap_or_else(|e| error!("Cannot remove Reader {guid:?} : {e:?}"));
   }
 
   fn unwrap_or_new_entity_id(

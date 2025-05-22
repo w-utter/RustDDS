@@ -257,7 +257,7 @@ fn main() {
                     Sample::Dispose(key) => println!("Disposed key {key:?}"),
                   }
                 Err(e) => {
-                  error!("{:?}", e);
+                  error!("{e:?}");
                   break;
                 }
               }

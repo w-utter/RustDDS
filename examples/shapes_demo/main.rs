@@ -389,7 +389,7 @@ fn main() {
         if last_write + loop_delay < now {
           writer
             .write(shape_sample.clone(), None)
-            .unwrap_or_else(|e| error!("DataWriter write failed: {:?}", e));
+            .unwrap_or_else(|e| error!("DataWriter write failed: {e:?}"));
           last_write = now;
         }
       }

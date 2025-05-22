@@ -92,10 +92,7 @@ impl SerializedPayload {
     let value = if bytes.len() >= H_LEN {
       bytes.slice(H_LEN..)
     } else {
-      warn!(
-        "DATA submessage was smaller than submessage header: {:?}",
-        bytes
-      );
+      warn!("DATA submessage was smaller than submessage header: {bytes:?}");
       return Err(io::Error::new(
         io::ErrorKind::Other,
         "Too short DATA submessage.",

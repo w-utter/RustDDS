@@ -363,15 +363,15 @@ where
       || self.num_bits == 0
       || sn >= self.bitmap_base + N::from(self.num_bits as i64)
     {
-      error!("out of bounds .insert({:?}) to {:?}", sn, self);
+      error!("out of bounds .insert({sn:?}) to {self:?}");
     } else {
       let bit_pos = i64::from(sn - self.bitmap_base) as u32;
       let word_num = bit_pos / 32;
       let bit_num = bit_pos % 32;
       if word_num >= self.bitmap.len() as u32 {
         error!(
-          "Tried to index {:?} (bit_pos={:?}) (word {:?} bit {:?}) in {:?}",
-          sn, bit_pos, word_num, bit_num, self
+          "Tried to index {sn:?} (bit_pos={bit_pos:?}) (word {word_num:?} bit {bit_num:?}) in \
+           {self:?}"
         );
       }
       self.bitmap[word_num as usize] |= 1u32 << (31 - bit_num);
@@ -387,10 +387,7 @@ where
       (Some(&start), Some(&end)) => {
         // sanity
         let base = if start < base {
-          error!(
-            "from_base_and_set : need base <= set start: base={:?} and set {:?}",
-            base, set
-          );
+          error!("from_base_and_set : need base <= set start: base={base:?} and set {set:?}");
           start
         } else {
           base
@@ -398,10 +395,7 @@ where
         if base < N::from(1) {
           // RTPS v2.5 spec Section "8.3.5.5 SequenceNumberSet":
           // minimum(SequenceNumberSet) >= 1
-          error!(
-            "from_base_and_set : minimum possible set element is 1, got base={:?}",
-            base
-          );
+          error!("from_base_and_set : minimum possible set element is 1, got base={base:?}");
           return Self::new_empty(N::from(1));
         }
         // start <= end, because BTreeSet properties.
@@ -410,9 +404,8 @@ where
           // maximum(SequenceNumberSet) - minimum(SequenceNumberSet) < 256
           let truncated_end = base + N::from(255);
           error!(
-            "from_base_and_set : max size (256) exceeded, base = {:?}, start = {:?} end = {:?}. \
-             Truncating end to {:?}",
-            base, start, end, truncated_end
+            "from_base_and_set : max size (256) exceeded, base = {base:?}, start = {start:?} end \
+             = {end:?}. Truncating end to {truncated_end:?}"
           );
           truncated_end
         } else {

@@ -21,10 +21,7 @@ pub fn get_local_unicast_locators(port: u16) -> Vec<Locator> {
       .map(|ip| Locator::from(SocketAddr::new(ip.ip(), port)))
       .collect(),
     Err(e) => {
-      error!(
-        "Cannot get local network interfaces: get_if_addrs() : {:?}",
-        e
-      );
+      error!("Cannot get local network interfaces: get_if_addrs() : {e:?}");
       vec![]
     }
   }

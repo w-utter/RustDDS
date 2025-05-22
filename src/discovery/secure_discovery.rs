@@ -399,9 +399,8 @@ impl SecureDiscovery {
       }
       Some(other_status) => {
         debug!(
-          "Received a dispose message from participant with authentication status: {:?}. \
-           Ignoring. Participant guid prefix: {:?}",
-          other_status, guid_prefix
+          "Received a dispose message from participant with authentication status: \
+           {other_status:?}. Ignoring. Participant guid prefix: {guid_prefix:?}"
         );
         // Do not allow with any other status
         NormalDiscoveryPermission::Deny
@@ -881,10 +880,7 @@ impl SecureDiscovery {
     if do_secure_write {
       let sec_sub_data = SubscriptionBuiltinTopicDataSecure::from((*local_user_reader).clone());
       if let Err(e) = secure_sub_writer.write(sec_sub_data, None) {
-        error!(
-          "Failed to write subscription to DCPSSubscriptionsSecure: {}",
-          e
-        );
+        error!("Failed to write subscription to DCPSSubscriptionsSecure: {e}");
       } else {
         security_info!(
           "Published DCPSSubscriptionsSecure data on topic {}, reader guid {:?}",
@@ -895,7 +891,7 @@ impl SecureDiscovery {
     } else {
       // Do a non-secure write
       if let Err(e) = nonsecure_sub_writer.write((*local_user_reader).clone(), None) {
-        error!("Failed to write subscription to DCPSSubscriptions: {}", e);
+        error!("Failed to write subscription to DCPSSubscriptions: {e}");
       } else {
         debug!(
           "Published DCPSSubscriptions data on topic {}, reader guid {:?}",
@@ -927,10 +923,7 @@ impl SecureDiscovery {
     if do_secure_write {
       let sec_pub_data = PublicationBuiltinTopicDataSecure::from((*local_user_writer).clone());
       if let Err(e) = secure_pub_writer.write(sec_pub_data, None) {
-        error!(
-          "Failed to write publication to DCPSPublicationsSecure: {}",
-          e
-        );
+        error!("Failed to write publication to DCPSPublicationsSecure: {e}");
       } else {
         security_info!(
           "Published DCPSPublicationsSecure data on topic {}, writer guid {:?}",
@@ -941,7 +934,7 @@ impl SecureDiscovery {
     } else {
       // Do a non-secure write
       if let Err(e) = nonsecure_pub_writer.write((*local_user_writer).clone(), None) {
-        error!("Failed to write publication to DCPSPublications: {}", e);
+        error!("Failed to write publication to DCPSPublications: {e}");
       } else {
         debug!(
           "Published DCPSPublication data on topic {}, writer guid {:?}",
@@ -1406,9 +1399,8 @@ impl SecureDiscovery {
       outcome => {
         // Other outcomes should not be possible
         error!(
-          "Got an unexpected outcome when validating remote identity. Validation outcome: {:?}. \
-           Remote guid: {:?}",
-          outcome, remote_guid
+          "Got an unexpected outcome when validating remote identity. Validation outcome: \
+           {outcome:?}. Remote guid: {remote_guid:?}"
         );
         AuthenticationStatus::Rejected // return value
       }
@@ -1475,10 +1467,7 @@ impl SecureDiscovery {
     discovery_db: &Arc<RwLock<DiscoveryDB>>,
     auth_msg_writer: &no_key::DataWriter<ParticipantStatelessMessage>,
   ) {
-    debug!(
-      "Sending a handshake request message to remote participant {:?}",
-      remote_guid_prefix
-    );
+    debug!("Sending a handshake request message to remote participant {remote_guid_prefix:?}");
 
     let request_message =
       match self.create_handshake_request_message(discovery_db, remote_guid_prefix) {
@@ -1504,9 +1493,8 @@ impl SecureDiscovery {
     // Try to send the message
     let _ = auth_msg_writer.write(request_message, None).map_err(|err| {
       warn!(
-        "Failed to send a handshake request message. Remote GUID prefix: {:?}. Info: {}. Trying \
-         to resend the message later.",
-        remote_guid_prefix, err
+        "Failed to send a handshake request message. Remote GUID prefix: {remote_guid_prefix:?}. \
+         Info: {err}. Trying to resend the message later."
       );
     });
 
@@ -1537,9 +1525,8 @@ impl SecureDiscovery {
           }
           Err(err) => {
             debug!(
-              "Failed to resend an unanswered authentication message to remote participant {:?}. \
-               Error: {}. Retrying later.",
-              guid_prefix, err
+              "Failed to resend an unanswered authentication message to remote participant \
+               {guid_prefix:?}. Error: {err}. Retrying later."
             );
           }
         }
@@ -1582,8 +1569,8 @@ impl SecureDiscovery {
       msg.remaining_resend_counter = STORED_AUTH_MESSAGE_MAX_RESEND_COUNT;
     } else {
       debug!(
-        "Did not find a stored authentication message for remote participant {:?}",
-        remote_guid_prefix
+        "Did not find a stored authentication message for remote participant \
+         {remote_guid_prefix:?}"
       );
     }
   }
@@ -1614,9 +1601,8 @@ impl SecureDiscovery {
     match self.get_handshake_state(&remote_guid_prefix) {
       None => {
         trace!(
-          "Received a handshake message from remote participant {:?}. Ignoring, since no \
-           handshake going on.",
-          remote_guid_prefix
+          "Received a handshake message from remote participant {remote_guid_prefix:?}. Ignoring, \
+           since no handshake going on."
         );
       }
       Some(DiscHandshakeState::PendingRequestSend) => {
@@ -1645,18 +1631,14 @@ impl SecureDiscovery {
         // Handshake with this remote has completed by us sending the final
         // message. Send the message again in case the remote hasn't
         // received it
-        debug!(
-          "Resending a final handshake message to remote participant {:?}",
-          remote_guid_prefix
-        );
+        debug!("Resending a final handshake message to remote participant {remote_guid_prefix:?}");
         self.resend_final_handshake_message(remote_guid_prefix, auth_msg_writer);
       }
       Some(DiscHandshakeState::CompletedWithFinalMessageReceived) => {
         debug!(
-          "Received a handshake message from remote participant {:?}. Handshake with this \
-           participant has already been completed by receiving the final message. Nothing for us \
-           to do anymore.",
-          remote_guid_prefix
+          "Received a handshake message from remote participant {remote_guid_prefix:?}. Handshake \
+           with this participant has already been completed by receiving the final message. \
+           Nothing for us to do anymore."
         );
       }
     }
@@ -1670,9 +1652,8 @@ impl SecureDiscovery {
   ) {
     let remote_guid_prefix = received_message.generic.source_guid_prefix();
     debug!(
-      "Received a handshake message from remote participant {:?}. Expecting a handshake request \
-       message.",
-      remote_guid_prefix
+      "Received a handshake message from remote participant {remote_guid_prefix:?}. Expecting a \
+       handshake request message."
     );
     let local_guid_prefix = self.local_participant_guid.prefix;
 
@@ -1682,8 +1663,7 @@ impl SecureDiscovery {
       None => {
         error!(
           "A ParticipantStatelessMessage does not contain a message token. Remote guid prefix: \
-           {:?}",
-          remote_guid_prefix
+           {remote_guid_prefix:?}"
         );
         return;
       }
@@ -1716,19 +1696,15 @@ impl SecureDiscovery {
           reply_token,
         );
 
-        debug!(
-          "Sending a handshake reply message to remote participant {:?}",
-          remote_guid_prefix
-        );
+        debug!("Sending a handshake reply message to remote participant {remote_guid_prefix:?}");
 
         // Send the token
         let _ = auth_msg_writer
           .write(reply_message.clone(), None)
           .map_err(|err| {
             error!(
-              "Failed to send a handshake reply message. Remote GUID prefix: {:?}. Info: {}. \
-               Trying to resend the message later.",
-              remote_guid_prefix, err
+              "Failed to send a handshake reply message. Remote GUID prefix: \
+               {remote_guid_prefix:?}. Info: {err}. Trying to resend the message later."
             );
           });
 
@@ -1745,15 +1721,13 @@ impl SecureDiscovery {
       Ok((other_outcome, _reply_token)) => {
         // Other outcomes should not be possible
         error!(
-          "Unexpected validation outcome from begin_handshake_reply. Outcome: {:?}. Remote guid \
-           prefix: {:?}",
-          other_outcome, remote_guid_prefix
+          "Unexpected validation outcome from begin_handshake_reply. Outcome: {other_outcome:?}. \
+           Remote guid prefix: {remote_guid_prefix:?}"
         );
       }
       Err(e) => {
         error!(
-          "Replying to a handshake request failed: {}. Remote guid prefix: {:?}",
-          e, remote_guid_prefix
+          "Replying to a handshake request failed: {e}. Remote guid prefix: {remote_guid_prefix:?}"
         );
       }
     }
@@ -1768,9 +1742,8 @@ impl SecureDiscovery {
   ) {
     let remote_guid_prefix = received_message.generic.source_guid_prefix();
     debug!(
-      "Received a handshake message from remote participant {:?}. Expecting a handshake reply \
-       message.",
-      remote_guid_prefix
+      "Received a handshake message from remote participant {remote_guid_prefix:?}. Expecting a \
+       handshake reply message."
     );
 
     // Make sure that 'related message identity' in the received message matches
@@ -1778,8 +1751,7 @@ impl SecureDiscovery {
     if !self.check_is_stateless_msg_related_to_our_msg(received_message, remote_guid_prefix) {
       warn!(
         "Received handshake message that is not related to the message that we have sent. \
-         Ignoring. Remote guid prefix: {:?}",
-        remote_guid_prefix
+         Ignoring. Remote guid prefix: {remote_guid_prefix:?}"
       );
       return;
     }
@@ -1790,8 +1762,7 @@ impl SecureDiscovery {
       None => {
         error!(
           "A ParticipantStatelessMessage does not contain a message token. Ignoring the message. \
-           Remote guid prefix: {:?}",
-          remote_guid_prefix
+           Remote guid prefix: {remote_guid_prefix:?}"
         );
         return;
       }
@@ -1813,19 +1784,15 @@ impl SecureDiscovery {
           final_message_token,
         );
 
-        debug!(
-          "Sending a final handshake message to remote participant {:?}",
-          remote_guid_prefix
-        );
+        debug!("Sending a final handshake message to remote participant {remote_guid_prefix:?}");
 
         // Send the token
         let _ = auth_msg_writer
           .write(final_message.clone(), None)
           .map_err(|err| {
             error!(
-              "Failed to send a final handshake message. Remote GUID prefix: {:?}. Info: {}. \
-               Trying to resend the message later.",
-              remote_guid_prefix, err
+              "Failed to send a final handshake message. Remote GUID prefix: \
+               {remote_guid_prefix:?}. Info: {err}. Trying to resend the message later."
             );
           });
 
@@ -1851,15 +1818,14 @@ impl SecureDiscovery {
       Ok((other_outcome, _token_opt)) => {
         // Expected only OkFinalMessage outcome
         error!(
-          "Received an unexpected validation outcome from the security plugins. Outcome: {:?}. \
-           Remote guid prefix: {:?}",
-          other_outcome, remote_guid_prefix
+          "Received an unexpected validation outcome from the security plugins. Outcome: \
+           {other_outcome:?}. Remote guid prefix: {remote_guid_prefix:?}"
         );
       }
       Err(e) => {
         error!(
-          "Validating handshake reply message failed. Error: {}. Remote guid prefix: {:?}",
-          e, remote_guid_prefix
+          "Validating handshake reply message failed. Error: {e}. Remote guid prefix: \
+           {remote_guid_prefix:?}"
         );
         // Reset stored message resend counter, so our resends can't be depleted by
         // sending us incorrect messages
@@ -1876,9 +1842,8 @@ impl SecureDiscovery {
   ) {
     let remote_guid_prefix = received_message.generic.source_guid_prefix();
     debug!(
-      "Received a handshake message from remote participant {:?}. Expecting a final handshake \
-       message",
-      remote_guid_prefix
+      "Received a handshake message from remote participant {remote_guid_prefix:?}. Expecting a \
+       final handshake message"
     );
 
     // Make sure that 'related message identity' in the received message matches
@@ -1886,8 +1851,7 @@ impl SecureDiscovery {
     if !self.check_is_stateless_msg_related_to_our_msg(received_message, remote_guid_prefix) {
       warn!(
         "Received handshake message that is not related to the message that we have sent. \
-         Ignoring. Remote guid prefix: {:?}",
-        remote_guid_prefix
+         Ignoring. Remote guid prefix: {remote_guid_prefix:?}"
       );
       return;
     }
@@ -1898,8 +1862,7 @@ impl SecureDiscovery {
       None => {
         error!(
           "A ParticipantStatelessMessage does not contain a message token. Ignoring the message. \
-           Remote guid prefix: {:?}",
-          remote_guid_prefix
+           Remote guid prefix: {remote_guid_prefix:?}"
         );
         return;
       }
@@ -1934,15 +1897,14 @@ impl SecureDiscovery {
       Ok((other_outcome, _token_opt)) => {
         // Expected only Ok outcome
         error!(
-          "Received an unexpected validation outcome from the security plugins. Outcome: {:?}. \
-           Remote guid prefix: {:?}",
-          other_outcome, remote_guid_prefix
+          "Received an unexpected validation outcome from the security plugins. Outcome: \
+           {other_outcome:?}. Remote guid prefix: {remote_guid_prefix:?}"
         );
       }
       Err(e) => {
         error!(
-          "Validating final handshake message failed. Error: {}. Remote guid prefix: {:?}",
-          e, remote_guid_prefix
+          "Validating final handshake message failed. Error: {e}. Remote guid prefix: \
+           {remote_guid_prefix:?}"
         );
         // Reset stored message resend counter, so our resends can't be depleted by
         // sending us incorrect messages
@@ -1958,8 +1920,8 @@ impl SecureDiscovery {
     let is_for_us = (dest_guid == GUID::GUID_UNKNOWN) || (dest_guid == self.local_participant_guid);
     if !is_for_us {
       trace!(
-        "Ignoring ParticipantVolatileMessageSecure message since it's not for us. dest_guid: {:?}",
-        dest_guid
+        "Ignoring ParticipantVolatileMessageSecure message since it's not for us. dest_guid: \
+         {dest_guid:?}"
       );
       return;
     }
@@ -1995,10 +1957,7 @@ impl SecureDiscovery {
             remote_participant_guidp
           );
         } else {
-          info!(
-            "Set crypto tokens for remote participant {:?}",
-            remote_participant_guidp
-          );
+          info!("Set crypto tokens for remote participant {remote_participant_guidp:?}");
         }
       }
 
@@ -2061,7 +2020,7 @@ impl SecureDiscovery {
         }
       }
       other => {
-        debug!("Unknown message_class_id in a volatile message: {}", other);
+        debug!("Unknown message_class_id in a volatile message: {other}");
       }
     }
   }
@@ -2087,10 +2046,7 @@ impl SecureDiscovery {
     // participant discovery")
     match self.validate_remote_participant_permissions(remote_guid_prefix, discovery_db) {
       Ok(()) => {
-        debug!(
-          "Validated permissions for remote participant {:?}",
-          remote_guid_prefix
-        );
+        debug!("Validated permissions for remote participant {remote_guid_prefix:?}");
       }
       Err(e) => {
         security_info!(
@@ -2202,10 +2158,7 @@ impl SecureDiscovery {
       match discovery_db_read(discovery_db).find_participant_proxy(remote_guid_prefix) {
         Some(data) => data.available_builtin_endpoints,
         None => {
-          error!(
-            "Could not find participant {:?} from DiscoveryDB",
-            remote_guid_prefix
-          );
+          error!("Could not find participant {remote_guid_prefix:?} from DiscoveryDB");
           return;
         }
       };
@@ -2408,10 +2361,7 @@ impl SecureDiscovery {
           remote_endpoint_guid
         );
       } else {
-        debug!(
-          "Set stored remote crypto tokens. Remote: {:?}",
-          remote_endpoint_guid
-        );
+        debug!("Set stored remote crypto tokens. Remote: {remote_endpoint_guid:?}");
         // Remove the stored message
         self
           .cached_received_key_exchange_messages
@@ -2467,10 +2417,7 @@ impl SecureDiscovery {
     };
 
     if !need_to_send_keys {
-      trace!(
-        "Key exchange is not needed with remote {:?}",
-        remote_endpoint_guid
-      );
+      trace!("Key exchange is not needed with remote {remote_endpoint_guid:?}");
       // Mark as if we have sent keys to the remote
       self
         .user_data_endpoints_with_keys_already_sent_to
@@ -2527,10 +2474,7 @@ impl SecureDiscovery {
         );
         return;
       } else {
-        debug!(
-          "Set our own crypto tokens as remote tokens. Guid: {:?}",
-          remote_endpoint_guid
-        );
+        debug!("Set our own crypto tokens as remote tokens. Guid: {remote_endpoint_guid:?}");
       }
     } else {
       // It's a real remote, send tokens over the network
@@ -2639,14 +2583,14 @@ impl SecureDiscovery {
         .write(stored_msg.message.clone(), None)
         .map_err(|err| {
           warn!(
-            "Failed to send a final handshake message. Remote GUID prefix: {:?}. Error: {}",
-            remote_guid_prefix, err
+            "Failed to send a final handshake message. Remote GUID prefix: \
+             {remote_guid_prefix:?}. Error: {err}"
           );
         });
     } else {
       warn!(
-        "Did not find the final handshake request to send. Remote guid prefix: {:?}",
-        remote_guid_prefix
+        "Did not find the final handshake request to send. Remote guid prefix: \
+         {remote_guid_prefix:?}"
       );
     }
   }
@@ -2669,10 +2613,7 @@ impl SecureDiscovery {
     let message_sent_by_us = match self.stored_authentication_messages.get(&sender_guid_prefix) {
       Some(msg) => &msg.message,
       None => {
-        debug!(
-          "Did not find an unanswered message for guid prefix {:?}",
-          sender_guid_prefix
-        );
+        debug!("Did not find an unanswered message for guid prefix {sender_guid_prefix:?}");
         return false;
       }
     };
@@ -2769,8 +2710,7 @@ fn get_handshake_token_from_stateless_message(
   if message.generic.message_data.len() > 1 {
     warn!(
       "ParticipantStatelessMessage for handshake contains more than one data holder. Using only \
-       the first one. Source guid prefix: {:?}",
-      source_guid_prefix
+       the first one. Source guid prefix: {source_guid_prefix:?}"
     );
   }
   message_data
@@ -2801,10 +2741,7 @@ fn register_remote_to_crypto(
         remote_guidp
       )
     })?;
-  trace!(
-    "Registered remote participant {:?} with the crypto plugin.",
-    remote_guidp
-  );
+  trace!("Registered remote participant {remote_guidp:?} with the crypto plugin.");
 
   // Register remote's secure built-in readers
   for (writer_eid, reader_eid, _reader_endpoint) in SECURE_BUILTIN_READERS_INIT_LIST {
@@ -2821,10 +2758,7 @@ fn register_remote_to_crypto(
           e,
         )
       })?;
-    trace!(
-      "Registered remote reader with the crypto plugin. GUID: {:?}",
-      remote_reader_guid
-    );
+    trace!("Registered remote reader with the crypto plugin. GUID: {remote_reader_guid:?}");
   }
 
   // Register remote's secure built-in writers
@@ -2842,10 +2776,7 @@ fn register_remote_to_crypto(
           e,
         )
       })?;
-    trace!(
-      "Registered remote writer with the crypto plugin. GUID: {:?}",
-      remote_writer_guid
-    );
+    trace!("Registered remote writer with the crypto plugin. GUID: {remote_writer_guid:?}");
   }
   Ok(())
 }

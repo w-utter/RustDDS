@@ -157,10 +157,7 @@ impl DiscoveryDB {
 
     // sanity check
     if guid.entity_id != EntityId::PARTICIPANT {
-      error!(
-        "Discovered participant GUID entity_id is not for participant: {:?}",
-        guid
-      );
+      error!("Discovered participant GUID entity_id is not for participant: {guid:?}");
       // Maybe we should discard the participant here?
       return false;
     }
@@ -180,10 +177,7 @@ impl DiscoveryDB {
       info!("New remote participant: {:?}", &data);
       new_participant = true;
       if guid == self.my_guid {
-        info!(
-          "Remote participant {:?} is myself, but some reflection is good.",
-          guid
-        );
+        info!("Remote participant {guid:?} is myself, but some reflection is good.");
         new_participant = false;
       }
 
@@ -211,17 +205,13 @@ impl DiscoveryDB {
     if let Some(ts) = self.participant_last_life_signs.get_mut(&guid_prefix) {
       let now = Instant::now();
       if now.duration_since(*ts) > std::time::Duration::from_secs(1) {
-        debug!(
-          "Participant alive update for {:?}, but no full update.",
-          guid_prefix
-        );
+        debug!("Participant alive update for {guid_prefix:?}, but no full update.");
       }
       *ts = now;
     } else {
       info!(
-        "Participant alive update for unknown {:?}. This is normal, if the message does not \
-         repeat.",
-        guid_prefix
+        "Participant alive update for unknown {guid_prefix:?}. This is normal, if the message \
+         does not repeat."
       );
     }
   }
@@ -230,7 +220,7 @@ impl DiscoveryDB {
   // disposal of the participant. active_disposal=false means that the
   // participant timed out.
   pub fn remove_participant(&mut self, guid_prefix: GuidPrefix, active_disposal: bool) {
-    info!("removing participant {:?}", guid_prefix);
+    info!("removing participant {guid_prefix:?}");
     self.participant_proxies.remove(&guid_prefix);
     self.participant_last_life_signs.remove(&guid_prefix);
     #[cfg(feature = "security")]
@@ -275,7 +265,7 @@ impl DiscoveryDB {
   }
 
   pub fn remove_topic_reader(&mut self, guid: GUID) {
-    info!("remove_topic_reader {:?}", guid);
+    info!("remove_topic_reader {guid:?}");
     self.external_topic_readers.remove(&guid);
   }
 
@@ -327,9 +317,8 @@ impl DiscoveryDB {
             // No timeout yet, we keep this, so do nothing.
           } else {
             info!(
-              "participant cleanup - deleting participant proxy {:?}. lease_duration = {:?} \
-               elapsed = {:?}",
-              guid, lease_duration, elapsed
+              "participant cleanup - deleting participant proxy {guid:?}. lease_duration = \
+               {lease_duration:?} elapsed = {elapsed:?}"
             );
             to_remove.push((
               guid,
@@ -341,7 +330,7 @@ impl DiscoveryDB {
           }
         }
         None => {
-          error!("Participant {:?} not in last_life_signs table?", guid);
+          error!("Participant {guid:?} not in last_life_signs table?");
         }
       } // match
     } // for
@@ -436,7 +425,7 @@ impl DiscoveryDB {
     let default_locator_lists = self
       .find_participant_proxy(guid.prefix)
       .map(|pp| {
-        debug!("Added participant locators to Reader {:?}", guid);
+        debug!("Added participant locators to Reader {guid:?}");
         (
           pp.default_unicast_locators.clone(),
           pp.default_multicast_locators.clone(),
@@ -454,7 +443,7 @@ impl DiscoveryDB {
         }
         (Vec::default(), Vec::default())
       });
-    debug!("External reader: {:?}", data);
+    debug!("External reader: {data:?}");
 
     // Now the topic update:
     let dtd = data.subscription_topic_data.to_topic_data();
@@ -492,7 +481,7 @@ impl DiscoveryDB {
     let default_locator_lists = self
       .find_participant_proxy(guid.prefix)
       .map(|pp| {
-        debug!("Added participant locators to Reader {:?}", guid);
+        debug!("Added participant locators to Reader {guid:?}");
         (
           pp.default_unicast_locators.clone(),
           pp.default_multicast_locators.clone(),
@@ -511,7 +500,7 @@ impl DiscoveryDB {
         (Vec::default(), Vec::default())
       });
 
-    debug!("External writer: {:?}", data);
+    debug!("External writer: {data:?}");
 
     // Now the topic update:
     let dtd = data.publication_topic_data.to_topic_data();
@@ -723,10 +712,7 @@ impl DiscoveryDB {
       .external_topic_writers
       .range(participant.range())
       .map(|(_guid, dwd)| dwd);
-    debug!(
-      "Writers on participant {:?} are {:?}",
-      participant, on_participant
-    );
+    debug!("Writers on participant {participant:?} are {on_participant:?}");
     on_participant
       .filter(|dwd| dwd.publication_topic_data.topic_name == topic_name)
       .cloned()

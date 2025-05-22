@@ -108,7 +108,7 @@ impl PrivateKey {
       .cloned()
       .unwrap_or("/usr/lib/softhsm/libsofthsm2.so"); // Some semi-reasnoable default value.
 
-    info!("Opening PKCS#11 HSM client library {}", module_path);
+    info!("Opening PKCS#11 HSM client library {module_path}");
     let context = Pkcs11::new(module_path)?;
     context.initialize(CInitializeArgs::OsThreads)?;
     debug!("PKCS#11 HSM library info: {:?}", context.get_library_info());
@@ -122,7 +122,7 @@ impl PrivateKey {
           match context.get_token_info(*slot) {
             Ok(token_info) => {
               if token_info.label() == *token_label {
-                info!("Found matching token \"{}\" in slot {}.", token_label, num);
+                info!("Found matching token \"{token_label}\" in slot {num}.");
                 let session = context.open_ro_session(*slot)?;
                 let secret_pin_opt: Option<AuthPin> =
                   pin_value_opt.map(|p| AuthPin::from_str(p).unwrap());
@@ -148,10 +148,7 @@ impl PrivateKey {
                       Attribute::Label(bytes) => Some(String::from_utf8_lossy(bytes)),
                       _ => None,
                     });
-                    info!(
-                      "Object {}: Found a Private Key. label={:?}",
-                      obj_num, object_label
-                    );
+                    info!("Object {obj_num}: Found a Private Key. label={object_label:?}");
 
                     // Test that the signing operation works.
                     let test_signature_result =
@@ -168,12 +165,12 @@ impl PrivateKey {
                       });
                     } else {
                       warn!(
-                        "Object {}: Test signing fails: {:?}. Cannot use this as private key.",
-                        obj_num, test_signature_result
+                        "Object {obj_num}: Test signing fails: {test_signature_result:?}. Cannot \
+                         use this as private key."
                       );
                     }
                   } else {
-                    debug!("Object {}: Attributes do not match {:?}", obj_num, attr);
+                    debug!("Object {obj_num}: Attributes do not match {attr:?}");
                   }
                 } // for objects
               } else {
@@ -184,11 +181,11 @@ impl PrivateKey {
                 );
               }
             }
-            Err(e) => warn!("Slot {}: get_token_info() fails: {:?}", num, e),
+            Err(e) => warn!("Slot {num}: get_token_info() fails: {e:?}"),
           }
         } // Ok with token_present
-        Ok(_) => info!("Slot {} has no token", num),
-        Err(e) => warn!("Slot {} get_slot_info() error: {:?}", num, e),
+        Ok(_) => info!("Slot {num} has no token"),
+        Err(e) => warn!("Slot {num} get_slot_info() error: {e:?}"),
       }
     } // for slots
 

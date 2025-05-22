@@ -289,16 +289,9 @@ impl Reader {
         let since_last = now.duration_since(last_change);
         // if time singe last received message is greater than deadline increase status
         // and return notification.
-        trace!(
-          "Comparing deadlines: {:?} - {:?}",
-          since_last,
-          deadline_duration
-        );
+        trace!("Comparing deadlines: {since_last:?} - {deadline_duration:?}");
         if since_last > deadline_duration {
-          debug!(
-            "Deadline missed: {:?} - {:?}",
-            since_last, deadline_duration
-          );
+          debug!("Deadline missed: {since_last:?} - {deadline_duration:?}");
           self.requested_deadline_missed_count += 1;
           changes.push(DataReaderStatus::RequestedDeadlineMissed {
             count: CountWithChange::start_from(self.requested_deadline_missed_count, 1),
@@ -365,7 +358,7 @@ impl Reader {
       .get(&sequence_number)
       .and_then(|i| topic_cache.get_change(i));
 
-    debug!("history cache !!!! {:?}", cc);
+    debug!("history cache !!!! {cc:?}");
 
     cc.map(|cc| cc.data_value.clone())
   }
@@ -434,7 +427,7 @@ impl Reader {
           offered_qos: Box::new(offered_qos.clone()),
         });
 
-        warn!("update_writer_proxy - QoS mismatch {:?}", bad_policy_id);
+        warn!("update_writer_proxy - QoS mismatch {bad_policy_id:?}");
         info!(
           "update_writer_proxy - QoS mismatch: topic={:?} requested={:?}  offered={:?}",
           self.topic_name, &self.qos_policy, offered_qos
@@ -564,7 +557,7 @@ impl Reader {
         writer_guid,
         writer_seq_num,
       ),
-      Err(e) => debug!("Parsing DATA to DDSData failed: {}", e),
+      Err(e) => debug!("Parsing DATA to DDSData failed: {e}"),
     }
   }
 
@@ -667,7 +660,7 @@ impl Reader {
         .fragment_assemblers
         .iter_mut()
         .for_each(|(writer, fa)| {
-          debug!("AssemblyBuffer GC writer {:?}", writer);
+          debug!("AssemblyBuffer GC writer {writer:?}");
           fa.garbage_collect_before(expire_before);
         });
     } else {
@@ -716,7 +709,7 @@ impl Reader {
       if let Some(writer_proxy) = self.matched_writer_mut(writer_guid) {
         if writer_proxy.should_ignore_change(writer_sn) {
           // change already present
-          trace!("handle_data_msg already have this seq={:?}", writer_sn);
+          trace!("handle_data_msg already have this seq={writer_sn:?}");
           if my_entity_id == EntityId::SPDP_BUILTIN_PARTICIPANT_READER {
             debug!("Accepting duplicate message to participant reader.");
             // This is an attempted workaround to eProsima FastRTPS not

@@ -128,8 +128,8 @@ impl UDPListener {
           .join_multicast_v4(&multicast_group, &a)
           .unwrap_or_else(|e| {
             warn!(
-              "join_multicast_v4 failed: {:?}. multicast_group [{:?}] interface [{:?}]",
-              e, multicast_group, a
+              "join_multicast_v4 failed: {e:?}. multicast_group [{multicast_group:?}] interface \
+               [{a:?}]"
             );
           }),
 

@@ -197,7 +197,7 @@ impl MessageReceiver {
   pub fn add_reader(&mut self, new_reader: Reader) {
     let eid = new_reader.guid().entity_id;
     match self.available_readers.entry(eid) {
-      Entry::Occupied(_) => warn!("Already have Reader {:?} - not adding.", eid),
+      Entry::Occupied(_) => warn!("Already have Reader {eid:?} - not adding."),
       Entry::Vacant(e) => {
         e.insert(new_reader);
       }
@@ -242,10 +242,7 @@ impl MessageReceiver {
         info!("Received message with RTPX header. Ignoring.");
         return;
       } else {
-        warn!(
-          "Received message with unknown start of header {:x?}. Ignoring.",
-          magic
-        );
+        warn!("Received message with unknown start of header {magic:x?}. Ignoring.");
         return;
       }
     }
@@ -255,8 +252,8 @@ impl MessageReceiver {
     let rtps_message = match Message::read_from_buffer(msg_bytes) {
       Ok(m) => m,
       Err(speedy_err) => {
-        warn!("RTPS deserialize error {:?}", speedy_err);
-        debug!("Data was {:?}", msg_bytes);
+        warn!("RTPS deserialize error {speedy_err:?}");
+        debug!("Data was {msg_bytes:?}");
         return;
       }
     };
@@ -311,9 +308,8 @@ impl MessageReceiver {
             }
             Ok(DecodeOutcome::ParticipantCryptoHandleNotFound(guid_prefix)) => {
               return trace!(
-                "No participant crypto handle found for the participant {:?} for rtps message \
-                 decoding.",
-                guid_prefix
+                "No participant crypto handle found for the participant {guid_prefix:?} for rtps \
+                 message decoding."
               )
             }
             Err(e) => return error!("{e:?}"),
@@ -426,8 +422,8 @@ impl MessageReceiver {
                     self.handle_writer_submessage(receiver_entity_id, submessage);
                   } else {
                     error!(
-                      "No reader with unprotected submessages found for the GUID {:?}",
-                      destination_guid
+                      "No reader with unprotected submessages found for the GUID \
+                       {destination_guid:?}"
                     );
                   }
                 }
@@ -458,8 +454,8 @@ impl MessageReceiver {
                   self.handle_reader_submessage(submessage);
                 } else {
                   error!(
-                    "No writer with unprotected submessages found for the GUID {:?}",
-                    destination_guid
+                    "No writer with unprotected submessages found for the GUID \
+                     {destination_guid:?}"
                   );
                 }
               }
@@ -608,10 +604,7 @@ impl MessageReceiver {
             .spdp_liveness_sender
             .try_send(source_guid_prefix)
             .unwrap_or_else(|e| {
-              debug!(
-                "spdp_liveness_sender.try_send(): {:?}. Is Discovery alive?",
-                e
-              );
+              debug!("spdp_liveness_sender.try_send(): {e:?}. Is Discovery alive?");
             });
         }
       }
@@ -844,7 +837,7 @@ impl MessageReceiver {
           Err(TrySendError::Full(_)) => {
             info!("AckNack pipe full. Looks like I am very busy. Discarding submessage.");
           }
-          Err(e) => warn!("AckNack pipe fail: {:?}", e),
+          Err(e) => warn!("AckNack pipe fail: {e:?}"),
         }
       }
 
@@ -973,9 +966,8 @@ impl MessageReceiver {
           }
           Ok(DecodeOutcome::ParticipantCryptoHandleNotFound(guid_prefix)) => {
             trace!(
-              "No participant crypto handle found for the participant {:?} for submessage \
-               decoding.",
-              guid_prefix
+              "No participant crypto handle found for the participant {guid_prefix:?} for \
+               submessage decoding."
             );
           }
         }
@@ -1222,10 +1214,7 @@ mod tests {
     // This is not correct way to read history cache values but it serves as a test
     let sequence_numbers =
       message_receiver.get_reader_history_cache_start_and_end_seq_num(reader_guid.entity_id);
-    info!(
-      "history change sequence number range: {:?}",
-      sequence_numbers
-    );
+    info!("history change sequence number range: {sequence_numbers:?}");
 
     // Get the DDSData (serialized) from the topic cache / history cache
     let a = message_receiver
@@ -1245,7 +1234,7 @@ mod tests {
       size: i32,
     }
     let (deserialized_shape_type, _) = from_bytes::<ShapeType, LittleEndian>(&a.data()).unwrap();
-    info!("deserialized shapeType: {:?}", deserialized_shape_type);
+    info!("deserialized shapeType: {deserialized_shape_type:?}");
 
     // Verify the color in the deserialized value is correct
     assert_eq!(deserialized_shape_type.color, "RED");

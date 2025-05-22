@@ -190,10 +190,7 @@ where
         debug!("Failed to send REMOVE_LOCAL_WRITER DiscoveryCommand: Disconnected.");
       }
       // other errors must be taken more seriously
-      Err(e) => error!(
-        "Failed to send REMOVE_LOCAL_WRITER DiscoveryCommand. {:?}",
-        e
-      ),
+      Err(e) => error!("Failed to send REMOVE_LOCAL_WRITER DiscoveryCommand. {e:?}"),
     }
   }
 }
@@ -1297,7 +1294,7 @@ mod tests {
     };
 
     let key = &data.key().hash_key(false);
-    info!("key: {:?}", key);
+    info!("key: {key:?}");
 
     data_writer
       .write(data.clone(), None)
