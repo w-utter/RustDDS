@@ -104,7 +104,7 @@ crossterm = "0.29"
 tui = { version = "0.19", default-features = false, features = ['crossterm'] }
 
 # shapes-demo
-clap = "4.2"
+clap = { version = "4.5", features = ["derive"] }
 ctrlc = "3.1.6"
 
 # async-shapes-demo
@@ -113,3 +113,6 @@ smol = "2.0"
 [target.'cfg(unix)'.dev-dependencies]
 # turle_teleop
 termion = "4.0.2"
+
+# ddsperf
+async-io ="*"
