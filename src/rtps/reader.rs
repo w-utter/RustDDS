@@ -1408,7 +1408,7 @@ impl Reader {
     &self.topic_name
   }
 
-  fn acquire_the_topic_cache_guard(&self) -> MutexGuard<TopicCache> {
+  fn acquire_the_topic_cache_guard(&self) -> MutexGuard<'_, TopicCache> {
     self.topic_cache.lock().unwrap_or_else(|e| {
       panic!(
         "The topic cache of topic {} is poisoned. Error: {}",

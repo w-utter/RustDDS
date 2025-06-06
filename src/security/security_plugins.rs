@@ -1343,7 +1343,7 @@ impl SecurityPluginsHandle {
     }
   }
 
-  pub(crate) fn get_plugins(&self) -> MutexGuard<SecurityPlugins> {
+  pub(crate) fn get_plugins(&self) -> MutexGuard<'_, SecurityPlugins> {
     let mut count = 0;
     loop {
       match self.try_lock() {

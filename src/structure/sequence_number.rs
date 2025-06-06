@@ -423,7 +423,7 @@ where
     }
   }
 
-  pub fn iter(&self) -> NumberSetIter<N> {
+  pub fn iter(&self) -> NumberSetIter<'_, N> {
     NumberSetIter::<N> {
       seq: self,
       at_bit: 0,

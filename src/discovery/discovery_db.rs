@@ -103,7 +103,7 @@ fn move_by_guid_prefix<D>(
 
 pub(crate) fn discovery_db_read(
   discovery_db: &Arc<RwLock<DiscoveryDB>>,
-) -> RwLockReadGuard<DiscoveryDB> {
+) -> RwLockReadGuard<'_, DiscoveryDB> {
   match discovery_db.read() {
     Ok(db) => db,
     Err(e) => panic!("DiscoveryDB is poisoned {e:?}."),
@@ -112,7 +112,7 @@ pub(crate) fn discovery_db_read(
 
 pub(crate) fn discovery_db_write(
   discovery_db: &Arc<RwLock<DiscoveryDB>>,
-) -> RwLockWriteGuard<DiscoveryDB> {
+) -> RwLockWriteGuard<'_, DiscoveryDB> {
   match discovery_db.write() {
     Ok(db) => db,
     Err(e) => panic!("DiscoveryDB is poisoned {e:?}."),

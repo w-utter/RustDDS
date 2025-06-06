@@ -890,7 +890,7 @@ where
       datareader: Arc::clone(&self.datareader),
     }
   }
-  fn lock_datareader(&self) -> ReadResult<MutexGuard<DataReader<D, DA>>> {
+  fn lock_datareader(&self) -> ReadResult<MutexGuard<'_, DataReader<D, DA>>> {
     self.datareader.lock().map_err(|e| ReadError::Poisoned {
       reason: format!("BareDataReaderStream could not lock datareader: {e:?}"),
     })
@@ -982,7 +982,7 @@ where
       datareader: Arc::clone(&self.datareader),
     }
   }
-  fn lock_datareader(&self) -> ReadResult<MutexGuard<DataReader<D, DA>>> {
+  fn lock_datareader(&self) -> ReadResult<MutexGuard<'_, DataReader<D, DA>>> {
     self.datareader.lock().map_err(|e| ReadError::Poisoned {
       reason: format!("DataReaderStream could not lock datareader: {e:?}"),
     })
@@ -1069,7 +1069,7 @@ where
   D: Keyed + 'static,
   DA: DeserializerAdapter<D>,
 {
-  fn lock_datareader(&self) -> ReadResult<MutexGuard<DataReader<D, DA>>> {
+  fn lock_datareader(&self) -> ReadResult<MutexGuard<'_, DataReader<D, DA>>> {
     self.datareader.lock().map_err(|e| ReadError::Poisoned {
       reason: format!("DataReaderEventStream could not lock datareader: {e:?}"),
     })

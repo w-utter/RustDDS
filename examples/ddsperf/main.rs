@@ -291,7 +291,7 @@ fn main() {
                 baggage,
               };
               ping_seq += 1;
-              let ts = Timestamp::now().into();
+              let ts = Timestamp::now();
               data_writer.async_write(keyed_seq_msg, Some(ts))
                 .await.unwrap();
             }

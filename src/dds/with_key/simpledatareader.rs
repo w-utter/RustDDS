@@ -411,7 +411,7 @@ where
     &self.my_topic
   }
 
-  pub fn as_async_stream<S>(&self) -> SimpleDataReaderStream<D, S, DA>
+  pub fn as_async_stream<S>(&self) -> SimpleDataReaderStream<'_, D, S, DA>
   where
     DA: DefaultDecoder<D, Decoder = S>,
     DA::Decoder: Clone,
@@ -420,7 +420,7 @@ where
     Self::as_async_stream_with(self, DA::DECODER)
   }
 
-  pub fn as_async_stream_with<S>(&self, decoder: S) -> SimpleDataReaderStream<D, S, DA>
+  pub fn as_async_stream_with<S>(&self, decoder: S) -> SimpleDataReaderStream<'_, D, S, DA>
   where
     S: Decode<DA::Decoded, DA::DecodedKey> + Clone,
   {
@@ -430,7 +430,7 @@ where
     }
   }
 
-  fn acquire_the_topic_cache_guard(&self) -> MutexGuard<TopicCache> {
+  fn acquire_the_topic_cache_guard(&self) -> MutexGuard<'_, TopicCache> {
     self.topic_cache.lock().unwrap_or_else(|e| {
       panic!(
         "The topic cache of topic {} is poisoned. Error: {}",
