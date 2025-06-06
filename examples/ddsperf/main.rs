@@ -75,6 +75,9 @@ enum PubModeArgs {
 fn main() {
   let command_line_args = CommandLineArgs::parse();
 
+  #[cfg(debug_assertions)]
+  println!("-------\nNOTE: Running debug build for performace test. It will be slow.\n-------");
+
   let domain_participant = DomainParticipantBuilder::new(0)
     .build()
     .unwrap_or_else(|e| panic!("DomainParticipant construction failed: {e:?}"));
