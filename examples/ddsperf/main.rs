@@ -83,7 +83,7 @@ fn main() {
     .unwrap_or_else(|e| panic!("DomainParticipant construction failed: {e:?}"));
 
   let qos = QosPolicyBuilder::new()
-    .history(History::KeepLast { depth: 2 })
+    .history(History::KeepLast { depth: 16 })
     .reliability(if command_line_args.best_effort {
       Reliability::BestEffort
     } else {
@@ -149,7 +149,8 @@ fn main() {
             //   break,
 
             _tick = ticker.select_next_some() => {
-              println!("{sample_count:9} samples {byte_count:9} bytes");
+              println!("{} samples {} bytes", 
+                format_count(sample_count), format_count(byte_count));
               sample_count = 0;
               byte_count = 0;
             }
@@ -258,10 +259,12 @@ fn main() {
         )));
 
         let mut ping_seq = 1;
-        let mut sample_count = 0_u64;
+        let mut sample_count = 0_u32;
         let mut byte_count = 0_u64;
         let mut rtt_total = rustdds::Duration::from_secs(0);
         let mut rtt_max = rustdds::Duration::from_secs(0);
+        let mut last_pong_seq = 0;
+        let mut lost_seq_count = 0_u32;
 
         println!("Waiting for messages.");
         loop {
@@ -271,16 +274,18 @@ fn main() {
             _tick = ticker.select_next_some() => {
               let rtt_avg =
                 if sample_count > 0 {
-                  rtt_total.to_std().as_millis() as u64 / sample_count
+                  rtt_total.to_std() / sample_count
                 } else {
-                  0
+                  Duration::from_secs(0)
                 };
-              println!("{sample_count:9} samples {byte_count:9} bytes   round-trip-time avg {rtt_avg:5} ms, max {:5} ms",
-                  rtt_max.to_std().as_millis());
+              println!("{} samples {} lost {} bytes  RTT avg {}, max {}",
+                  format_count(sample_count as u64), format_count(lost_seq_count as u64), format_count(byte_count),
+                  format_duration(rtt_avg) , format_duration(rtt_max.to_std()));
               sample_count = 0;
               byte_count = 0;
               rtt_total = rustdds::Duration::from_secs(0);
               rtt_max = rustdds::Duration::from_secs(0);
+              lost_seq_count = 0;
             }
 
             // generate ping
@@ -305,6 +310,16 @@ fn main() {
                 Ok(s) => match s.value() {
                   Sample::Value(keyed_seq_msg) => {
                     sample_count += 1;
+                    if keyed_seq_msg.seq > last_pong_seq {
+                      // normal case
+                      lost_seq_count += keyed_seq_msg.seq - last_pong_seq - 1; // this is supposed to be zero
+                      last_pong_seq = keyed_seq_msg.seq;
+                    } else {
+                      println!("Eek! Pong seq did not increase! expected={} received={}",
+                        last_pong_seq+1, keyed_seq_msg.seq);
+                    }
+
+
                     // estimate size of message on the wire:
                     // 8 bytes for u32 + u32
                     // 4 bytes for baggage sequence size
@@ -360,7 +375,7 @@ fn main() {
         let mut event_stream = sample_stream.async_event_stream();
         let mut ticker = StreamExt::fuse(async_io::Timer::interval(Duration::from_secs(1)));
 
-        let mut sample_count = 0_u64;
+        let mut sample_count = 0_u32;
         let mut byte_count = 0_u64;
 
         println!("Waiting for messages.");
@@ -368,7 +383,8 @@ fn main() {
           futures::select! {
 
             _tick = ticker.select_next_some() => {
-              println!("{sample_count:9} samples {byte_count:9} bytes");
+              println!("{} samples {} bytes", 
+                format_count(sample_count as u64), format_count(byte_count));
               sample_count = 0;
               byte_count = 0;
             }
@@ -418,3 +434,36 @@ fn main() {
     } // Pong
   } // match main_mode
 } // fn
+
+fn format_duration(d: Duration) -> String {
+  let nanos = d.as_nanos();
+  if nanos < 2999000 {
+    format!("{:4} μs", d.as_micros())
+  } else if nanos < 2999_000_000 {
+    format!("{:4} ms", d.as_millis())
+  } else {
+    format!("{:4}sec", d.as_secs())
+  }
+}
+
+fn format_count(count : u64) -> String {
+  if count < 1000 {
+    format!("{:5}",count)
+  } else if count < 10_000 {
+    format!("{:1.2}k", count as f64 / 1000.0 )
+  } else if count < 100_000 {
+    format!("{:2.1}k", count as f64 / 1000.0 )
+  } else if count < 1000_000 {
+    format!("{:4.0}k", count as f64 / 1000.0 )
+
+  } else if count < 10_000_000 {
+    format!("{:1.2}M", count as f64 / 1000_000.0 )
+  } else if count < 100_000_000 {
+    format!("{:2.1}M", count as f64 / 1000_000.0 )
+  } else if count < 1000_000_000 {
+    format!("{:4.0}M", count as f64 / 1000_000.0 )
+  } else {
+    format!("{:2.1}G", count as f64 / 1000_000_000.0 )
+  }
+
+}
