@@ -355,17 +355,15 @@ where
     let latest_instant = read_state_ref.latest_instant;
     let (last_read_sn, hash_to_key_map) = read_state_ref.get_sn_map_and_hash_map();
 
-    let mut changes = Self::try_take_undecoded(is_reliable, &topic_cache, latest_instant, last_read_sn);
+    let mut changes =
+      Self::try_take_undecoded(is_reliable, &topic_cache, latest_instant, last_read_sn);
 
     // loop in case we get a sample that should be ignored, so we try next.
     loop {
-      let (timestamp, cc) =
-        match changes
-          .next()
-        {
-          None => return Ok(None), // no more data available right now
-          Some((ts, cc)) => (ts, cc),
-        };
+      let (timestamp, cc) = match changes.next() {
+        None => return Ok(None), // no more data available right now
+        Some((ts, cc)) => (ts, cc),
+      };
 
       let result = self.deserialize_with(timestamp, cc, hash_to_key_map, decoder.clone());
 
