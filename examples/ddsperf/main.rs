@@ -77,6 +77,7 @@ fn main() {
 
   let this_process = procfs::process::Process::myself().unwrap();
   let process_ticks_per_second = procfs::ticks_per_second() as f32;
+  let kernel_page_size = procfs::page_size();
 
   let mut process_stat = this_process.stat().unwrap();
   let mut last_stat_instant = Instant::now();
@@ -89,11 +90,17 @@ fn main() {
     let call_interval = stat_instant.duration_since(last_stat_instant).as_secs_f32();
     last_stat_instant = stat_instant;
 
+    let stat_mem = this_process.statm().unwrap();
+    let rss_size_bytes = stat_mem.resident * kernel_page_size;
+
     let user_percentage =
       100.0 * ((process_stat.utime - prev_utime) as f32 / process_ticks_per_second) / call_interval;
     let sys_percentage =
       100.0 * ((process_stat.stime - prev_stime) as f32 / process_ticks_per_second) / call_interval;
-    println!("user {user_percentage:2.0}% sys {sys_percentage:2.0}%");
+    println!(
+      "user {user_percentage:2.0}% sys {sys_percentage:2.0}% RSS {}B",
+      format_count(rss_size_bytes)
+    );
   };
 
   #[cfg(debug_assertions)]
@@ -174,6 +181,7 @@ fn main() {
                 format_count(sample_count), format_count(byte_count));
               sample_count = 0;
               byte_count = 0;
+              print_and_reset_cpu_usage();
             }
 
             result = sample_stream.select_next_some() => {
@@ -409,6 +417,7 @@ fn main() {
                 format_count(sample_count as u64), format_count(byte_count));
               sample_count = 0;
               byte_count = 0;
+              print_and_reset_cpu_usage();
             }
 
             result = sample_stream.select_next_some() => {
