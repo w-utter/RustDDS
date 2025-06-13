@@ -1,6 +1,6 @@
 //! Performance test program inspired by `ddsperf` in CycloneDDS
 
-use std::time::{/* Instant, */ Duration};
+use std::time::{Duration, Instant};
 
 use log::error;
 use rustdds::{
@@ -74,6 +74,27 @@ enum PubModeArgs {
 
 fn main() {
   let command_line_args = CommandLineArgs::parse();
+
+  let this_process = procfs::process::Process::myself().unwrap();
+  let process_ticks_per_second = procfs::ticks_per_second() as f32;
+
+  let mut process_stat = this_process.stat().unwrap();
+  let mut last_stat_instant = Instant::now();
+  let mut print_and_reset_cpu_usage = move || {
+    let prev_utime = process_stat.utime;
+    let prev_stime = process_stat.stime;
+    process_stat = this_process.stat().unwrap();
+
+    let stat_instant = Instant::now();
+    let call_interval = stat_instant.duration_since(last_stat_instant).as_secs_f32();
+    last_stat_instant = stat_instant;
+
+    let user_percentage =
+      100.0 * ((process_stat.utime - prev_utime) as f32 / process_ticks_per_second) / call_interval;
+    let sys_percentage =
+      100.0 * ((process_stat.stime - prev_stime) as f32 / process_ticks_per_second) / call_interval;
+    println!("user {user_percentage:2.0}% sys {sys_percentage:2.0}%");
+  };
 
   #[cfg(debug_assertions)]
   println!("-------\nNOTE: Running debug build for performace test. It will be slow.\n-------");
@@ -149,7 +170,7 @@ fn main() {
             //   break,
 
             _tick = ticker.select_next_some() => {
-              println!("{} samples {} bytes", 
+              println!("{} samples {} bytes",
                 format_count(sample_count), format_count(byte_count));
               sample_count = 0;
               byte_count = 0;
@@ -286,6 +307,7 @@ fn main() {
               rtt_total = rustdds::Duration::from_secs(0);
               rtt_max = rustdds::Duration::from_secs(0);
               lost_seq_count = 0;
+              print_and_reset_cpu_usage();
             }
 
             // generate ping
@@ -383,7 +405,7 @@ fn main() {
           futures::select! {
 
             _tick = ticker.select_next_some() => {
-              println!("{} samples {} bytes", 
+              println!("{} samples {} bytes",
                 format_count(sample_count as u64), format_count(byte_count));
               sample_count = 0;
               byte_count = 0;
@@ -437,33 +459,31 @@ fn main() {
 
 fn format_duration(d: Duration) -> String {
   let nanos = d.as_nanos();
-  if nanos < 2999000 {
+  if nanos < 2_999_000 {
     format!("{:4} μs", d.as_micros())
-  } else if nanos < 2999_000_000 {
+  } else if nanos < 2_999_000_000 {
     format!("{:4} ms", d.as_millis())
   } else {
     format!("{:4}sec", d.as_secs())
   }
 }
 
-fn format_count(count : u64) -> String {
+fn format_count(count: u64) -> String {
   if count < 1000 {
-    format!("{:5}",count)
+    format!("{count:5}")
   } else if count < 10_000 {
-    format!("{:1.2}k", count as f64 / 1000.0 )
+    format!("{:1.2}k", count as f64 / 1_000.0)
   } else if count < 100_000 {
-    format!("{:2.1}k", count as f64 / 1000.0 )
-  } else if count < 1000_000 {
-    format!("{:4.0}k", count as f64 / 1000.0 )
-
+    format!("{:2.1}k", count as f64 / 1_000.0)
+  } else if count < 1_000_000 {
+    format!("{:4.0}k", count as f64 / 1_000.0)
   } else if count < 10_000_000 {
-    format!("{:1.2}M", count as f64 / 1000_000.0 )
+    format!("{:1.2}M", count as f64 / 1_000_000.0)
   } else if count < 100_000_000 {
-    format!("{:2.1}M", count as f64 / 1000_000.0 )
-  } else if count < 1000_000_000 {
-    format!("{:4.0}M", count as f64 / 1000_000.0 )
+    format!("{:2.1}M", count as f64 / 1_000_000.0)
+  } else if count < 1_000_000_000 {
+    format!("{:4.0}M", count as f64 / 1_000_000.0)
   } else {
-    format!("{:2.1}G", count as f64 / 1000_000_000.0 )
+    format!("{:2.1}G", count as f64 / 1_000_000_000.0)
   }
-
 }

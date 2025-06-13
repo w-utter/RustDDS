@@ -116,3 +116,4 @@ termion = "4.0.2"
 
 # ddsperf
 async-io ="*"
+procfs = "0.17"
