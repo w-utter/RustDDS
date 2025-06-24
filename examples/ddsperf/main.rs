@@ -1,6 +1,8 @@
 //! Performance test program inspired by `ddsperf` in CycloneDDS
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(target_os = "linux")]
+use std::time::Instant;
 
 use log::error;
 use rustdds::{
@@ -75,33 +77,7 @@ enum PubModeArgs {
 fn main() {
   let command_line_args = CommandLineArgs::parse();
 
-  let this_process = procfs::process::Process::myself().unwrap();
-  let process_ticks_per_second = procfs::ticks_per_second() as f32;
-  let kernel_page_size = procfs::page_size();
-
-  let mut process_stat = this_process.stat().unwrap();
-  let mut last_stat_instant = Instant::now();
-  let mut print_and_reset_cpu_usage = move || {
-    let prev_utime = process_stat.utime;
-    let prev_stime = process_stat.stime;
-    process_stat = this_process.stat().unwrap();
-
-    let stat_instant = Instant::now();
-    let call_interval = stat_instant.duration_since(last_stat_instant).as_secs_f32();
-    last_stat_instant = stat_instant;
-
-    let stat_mem = this_process.statm().unwrap();
-    let rss_size_bytes = stat_mem.resident * kernel_page_size;
-
-    let user_percentage =
-      100.0 * ((process_stat.utime - prev_utime) as f32 / process_ticks_per_second) / call_interval;
-    let sys_percentage =
-      100.0 * ((process_stat.stime - prev_stime) as f32 / process_ticks_per_second) / call_interval;
-    println!(
-      "user {user_percentage:2.0}% sys {sys_percentage:2.0}% RSS {}B",
-      format_count(rss_size_bytes)
-    );
-  };
+  let mut print_and_reset_cpu_usage = cpu_usage_printer_closure();
 
   #[cfg(debug_assertions)]
   println!("-------\nNOTE: Running debug build for performace test. It will be slow.\n-------");
@@ -494,5 +470,44 @@ fn format_count(count: u64) -> String {
     format!("{:4.0}M", count as f64 / 1_000_000.0)
   } else {
     format!("{:2.1}G", count as f64 / 1_000_000_000.0)
+  }
+}
+
+#[cfg(target_os = "linux")] // procfs is onl available on linux
+fn cpu_usage_printer_closure() -> impl FnMut() {
+  let this_process = procfs::process::Process::myself().unwrap();
+  let process_ticks_per_second = procfs::ticks_per_second() as f32;
+  let kernel_page_size = procfs::page_size();
+
+  let mut process_stat = this_process.stat().unwrap();
+  let mut last_stat_instant = Instant::now();
+
+  move || {
+    let prev_utime = process_stat.utime;
+    let prev_stime = process_stat.stime;
+    process_stat = this_process.stat().unwrap();
+
+    let stat_instant = Instant::now();
+    let call_interval = stat_instant.duration_since(last_stat_instant).as_secs_f32();
+    last_stat_instant = stat_instant;
+
+    let stat_mem = this_process.statm().unwrap();
+    let rss_size_bytes = stat_mem.resident * kernel_page_size;
+
+    let user_percentage =
+      100.0 * ((process_stat.utime - prev_utime) as f32 / process_ticks_per_second) / call_interval;
+    let sys_percentage =
+      100.0 * ((process_stat.stime - prev_stime) as f32 / process_ticks_per_second) / call_interval;
+    println!(
+      "user {user_percentage:2.0}% sys {sys_percentage:2.0}% RSS {}B",
+      format_count(rss_size_bytes)
+    );
+  }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn cpu_usage_printer_closure() -> impl FnMut() {
+  || {
+    // no-op
   }
 }
