@@ -223,13 +223,17 @@ pub use serialization::RepresentationIdentifier;
 pub use serialization::{
   CDRDeserializerAdapter, CDRSerializerAdapter, CdrDeserializer, CdrSerializer,
 };
+/// Part of RTPS DATA submessage: 4-byte header + serialized data
+pub use messages::submessages::elements::serialized_payload::SerializedPayload;
 pub use structure::{
   duration::Duration, entity::RTPSEntity, guid::GUID, sequence_number::SequenceNumber,
   time::Timestamp,
 };
 // re-export from a helper crate
-/// Helper trait to compute the CDR-serialized size of data
-pub use cdr_encoding_size::CdrEncodingSize;
+/// Helper pacakge to compute the CDR-serialized size of data
+pub use cdr_encoding_size;
+/// Re-export CDR encoder/decoder
+pub use cdr_encoding;
 
 /// Components used to access NO_KEY Topics
 pub mod no_key {
