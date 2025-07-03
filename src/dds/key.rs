@@ -102,6 +102,7 @@ impl KeyHash {
 /// ```
 /// use rustdds::*;
 /// use serde::{Serialize, Deserialize};
+/// use rustdds::dds::key::CdrEncodingSize;
 ///
 /// #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord,
 ///          Serialize, Deserialize, CdrEncodingSize)]
