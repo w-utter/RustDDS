@@ -1396,64 +1396,91 @@ impl Discovery {
     // See 8.4.13.5 "Implementing Writer Liveliness Protocol .." in the RPTS spec
 
     // Dig out the smallest lease duration for writers with Automatic liveliness QoS
-    let writer_livelinesses: Vec<Liveliness> = discovery_db_read(&self.discovery_db)
-      .get_all_local_topic_writers()
-      .filter_map(|p| p.publication_topic_data.liveliness)
-      .collect();
 
-    let min_automatic_lease_duration_opt = writer_livelinesses
-      .iter()
-      .filter_map(|liveliness| match liveliness {
-        Liveliness::Automatic { lease_duration } => Some(*lease_duration),
-        _other => None,
+    let discovery_db = discovery_db_read(&self.discovery_db);
+
+    let min_automatic_lease_duration = discovery_db
+      .get_all_local_topic_writers()
+      .filter_map(|p| match &p.publication_topic_data.liveliness {
+        Some(Liveliness::Automatic { lease_duration }) => Some(lease_duration),
+        _ => None,
       })
       .min();
 
     let timenow = Timestamp::now();
 
-    let mut messages_to_be_sent: Vec<ParticipantMessageData> = vec![];
+    struct ParticipantMessages<'a, 'b> {
+      min_automatic_lease_duration: Option<&'a Duration>,
+      timenow: Timestamp,
+      liveliness_state: &'b mut LivelinessState,
+      domain_participant: &'b DomainParticipantWeak,
+    }
 
-    // Send Automatic liveness update if needed
-    if let Some(min_auto_duration) = min_automatic_lease_duration_opt {
-      let time_since_last_auto_update =
-        timenow.duration_since(self.liveliness_state.last_auto_update);
-      trace!(
-        "time_since_last_auto_update: {time_since_last_auto_update:?}, min_auto_duration \
-         {min_auto_duration:?}"
-      );
-
-      // We choose to send a new liveliness message if longer than half of the min
-      // auto duration has elapsed since last message
-      if time_since_last_auto_update > min_auto_duration / 2 {
-        let msg = ParticipantMessageData {
-          guid: self.domain_participant.guid_prefix(),
-          kind: ParticipantMessageDataKind::AUTOMATIC_LIVELINESS_UPDATE,
-          data: Vec::new(),
-        };
-        messages_to_be_sent.push(msg);
+    impl ParticipantMessages<'_, '_> {
+      fn auto_update(&mut self) {
+        core::mem::swap(
+          &mut self.timenow,
+          &mut self.liveliness_state.last_auto_update,
+        );
       }
     }
 
-    // Send ManualByParticipant liveliness update if someone has requested us to do
-    // so.
-    // Note: According to the RTPS spec (8.7.2.2.3 LIVELINESS) the interval at which
-    // we check if we need to send a manual liveness update should depend on the
-    // lease durations of writers with ManualByParticipant liveness QoS.
-    // Now we just check this at the same interval as with Automatic liveness.
-    // So TODO if needed: comply with the spec.
-    if self
-      .liveliness_state
-      .manual_participant_liveness_refresh_requested
-    {
-      let msg = ParticipantMessageData {
-        guid: self.domain_participant.guid_prefix(),
-        kind: ParticipantMessageDataKind::MANUAL_LIVELINESS_UPDATE,
-        data: Vec::new(),
-      };
-      messages_to_be_sent.push(msg);
+    impl Iterator for ParticipantMessages<'_, '_> {
+      type Item = ParticipantMessageData;
+
+      fn next(&mut self) -> Option<Self::Item> {
+        // Send Automatic liveness update if needed
+        if let Some(min_auto_duration) = core::mem::take(&mut self.min_automatic_lease_duration) {
+          let time_since_last_auto_update = self
+            .timenow
+            .duration_since(self.liveliness_state.last_auto_update);
+
+          trace!(
+            "time_since_last_auto_update: {time_since_last_auto_update:?}, min_auto_duration \
+             {min_auto_duration:?}"
+          );
+
+          if time_since_last_auto_update > *min_auto_duration / 2 {
+            return Some(ParticipantMessageData {
+              guid: self.domain_participant.guid_prefix(),
+              kind: ParticipantMessageDataKind::AUTOMATIC_LIVELINESS_UPDATE,
+              data: Vec::new(),
+            });
+          }
+        }
+
+        // Send ManualByParticipant liveliness update if someone has requested us to do
+        // so.
+        // Note: According to the RTPS spec (8.7.2.2.3 LIVELINESS) the interval at which
+        // we check if we need to send a manual liveness update should depend on the
+        // lease durations of writers with ManualByParticipant liveness QoS.
+        // Now we just check this at the same interval as with Automatic liveness.
+        // So TODO if needed: comply with the spec.
+        if core::mem::take(
+          &mut self
+            .liveliness_state
+            .manual_participant_liveness_refresh_requested,
+        ) {
+          return Some(ParticipantMessageData {
+            guid: self.domain_participant.guid_prefix(),
+            kind: ParticipantMessageDataKind::MANUAL_LIVELINESS_UPDATE,
+            data: Vec::new(),
+          });
+        }
+        None
+      }
     }
 
-    for msg in messages_to_be_sent {
+    let mut messages_to_be_sent = ParticipantMessages {
+      min_automatic_lease_duration,
+      timenow,
+      liveliness_state: &mut self.liveliness_state,
+      domain_participant: &self.domain_participant,
+    };
+
+    let mut manual_assertion_failed = false;
+
+    while let Some(msg) = messages_to_be_sent.next() {
       let msg_kind = msg.kind;
 
       #[cfg(not(feature = "security"))]
@@ -1473,24 +1500,27 @@ impl Discovery {
 
       match write_result {
         Ok(_) => {
-          match msg_kind {
-            ParticipantMessageDataKind::AUTOMATIC_LIVELINESS_UPDATE => {
-              self.liveliness_state.last_auto_update = timenow;
-            }
-            ParticipantMessageDataKind::MANUAL_LIVELINESS_UPDATE => {
-              // We delivered what was requested
-              self
-                .liveliness_state
-                .manual_participant_liveness_refresh_requested = false;
-            }
-            _ => (),
+          if matches!(
+            msg_kind,
+            ParticipantMessageDataKind::AUTOMATIC_LIVELINESS_UPDATE
+          ) {
+            messages_to_be_sent.auto_update();
           }
         }
         Err(e) => {
+          if matches!(
+            msg_kind,
+            ParticipantMessageDataKind::MANUAL_LIVELINESS_UPDATE
+          ) {
+            manual_assertion_failed = true;
+          }
           error!("Failed to writer ParticipantMessageData. {e:?}");
         }
       }
     }
+    self
+      .liveliness_state
+      .manual_participant_liveness_refresh_requested = manual_assertion_failed;
   }
 
   #[cfg(feature = "security")]
