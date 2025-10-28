@@ -110,7 +110,7 @@ ctrlc = "3.1.6"
 # async-shapes-demo
 smol = "2.0"
 
-async-io ="*" # ddsperf
+async-io ="2.4" # ddsperf
 
 [target.'cfg(unix)'.dev-dependencies]
 # turle_teleop
