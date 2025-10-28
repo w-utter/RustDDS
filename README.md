@@ -165,6 +165,11 @@ The DDS specification specifies manual memory management in the sense that many 
 * Fix private type leak, which prevented NO_KEY topics working with mio-0.8.x. Discovered by @garamgim.
 * Properly check for multicast when enumerating network interfaces. Fix contributed by @onkoe.
 
+### Version 0.11.6
+* New test program `ddsperf`
+* Fix bug / race condition in Discovery: Previously known Endpoints were ignored.
+* Bug fix: CDR serializer endianness was indicated wrong.
+
 ## Version 0.10.0
 The `DeserializerAdpter` interface for attaching serialization formats to RTPS was extended
 to support deserialization with a "seed" value. This allows the deserialization process
