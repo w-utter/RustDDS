@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use enumflags2::{bitflags, BitFlags};
-use log::error;
 use speedy::{Context, Readable, Reader, Writable, Writer};
 use serde::{Deserialize, Serialize};
 

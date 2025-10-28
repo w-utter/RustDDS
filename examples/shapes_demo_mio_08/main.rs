@@ -225,7 +225,7 @@ fn main() {
   };
 
   let mut shape_sample = ShapeType {
-    color: color.to_string(),
+    color: color.clone(),
     x: 0,
     y: 0,
     shape_size: 21,

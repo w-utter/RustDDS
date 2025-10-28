@@ -135,7 +135,9 @@ mod with_key {
   use mio_extras::timer::Timer;
 
   use super::{DataReaderPlCdr, DataWriterPlCdr};
-  use crate::{polling::TimerPolicy, serialization::pl_cdr_adapters::*, Key, Keyed, Topic, TopicKind};
+  use crate::{
+    polling::TimerPolicy, serialization::pl_cdr_adapters::*, Key, Keyed, Topic, TopicKind,
+  };
 
   pub const TOPIC_KIND: TopicKind = TopicKind::WithKey;
 
@@ -712,17 +714,30 @@ impl Discovery {
   pub fn discovery_event_loop(&mut self) {
     self.initialize_participant();
 
-    // send out info about non-built-in Writers and Readers that we have.
-    self.sedp_publish_writers();
-    self.sedp_publish_readers();
+    // Send out info about user (=non-built-in) Writers and Readers that we have.
+    // We are just initializing local participant, so likely there are none yet,
+    // but better make sure.
+    // TODO: Check if there can acually be any. If not, then this code is
+    // unnecessary.
+    let db = discovery_db_read(&self.discovery_db);
+    for reader in db.get_all_local_topic_readers() {
+      self.sedp_publish_single_user_reader(reader);
+    }
+    for writer in db.get_all_local_topic_writers() {
+      self.sedp_publish_single_user_writer(writer);
+    }
+    drop(db);
 
-    match self.discovery_started_sender.send(Ok(())) {
-      Ok(_) => (),
-      _ => return, // Participant has probably crashed at this point
-    };
+    self
+      .discovery_started_sender
+      .send(Ok(()))
+      .expect("Discovery start notification send failure!");
+    // If this triggers, then discovery_started channel has been
+    // closed, which likely means the receiver (app thread) has paniced also.
+    // They will wait for up to 10 sec for us to send this handshake.
 
+    let mut events = Events::with_capacity(32);
     loop {
-      let mut events = Events::with_capacity(32); // Should this be outside of the loop?
       match self
         .poll
         .poll(&mut events, Some(std::time::Duration::from_millis(5000)))
@@ -737,7 +752,7 @@ impl Discovery {
         debug!("Discovery event loop idling.");
       }
 
-      for event in events.into_iter() {
+      for event in events.iter() {
         match event.token() {
           DISCOVERY_COMMAND_TOKEN => {
             while let Ok(command) = self.discovery_command_receiver.try_recv() {
@@ -1723,7 +1738,7 @@ impl Discovery {
     discovery_db_write(&self.discovery_db).topic_cleanup();
   }
 
-  fn sedp_publish_single_reader(&self, reader_data: &DiscoveredReaderData) {
+  fn sedp_publish_single_user_reader(&self, reader_data: &DiscoveredReaderData) {
     if !reader_data
       .reader_proxy
       .remote_reader_guid
@@ -1776,13 +1791,6 @@ impl Discovery {
     }
   }
 
-  fn sedp_publish_readers(&self) {
-    let db = discovery_db_read(&self.discovery_db);
-    for reader in db.get_all_local_topic_readers() {
-      self.sedp_publish_single_reader(reader);
-    }
-  }
-
   fn add_local_writer(&self, guid: GUID) {
     // Get writer data from db
     let db = discovery_db_read(&self.discovery_db);
@@ -1795,11 +1803,11 @@ impl Discovery {
     };
 
     // Publish it to SEDP (if needed)
-    self.sedp_publish_single_writer(writer_data);
+    self.sedp_publish_single_user_writer(writer_data);
 
-    // Send the ReaderUpdated notification on any existing readers on the writer's topic
-    // This will result in matching the endpoints if possible
-    let existing_readers = db.readers_on_topic(&writer_data.publication_topic_data.topic_name());
+    // Send the ReaderUpdated notification on any existing readers on the writer's
+    // topic This will result in matching the endpoints if possible
+    let existing_readers = db.readers_on_topic(writer_data.publication_topic_data.topic_name());
     for reader in existing_readers {
       self.send_discovery_notification(DiscoveryNotificationType::ReaderUpdated {
         discovered_reader_data: reader.clone(),
@@ -1819,11 +1827,11 @@ impl Discovery {
     };
 
     // Publish it to SEDP (if needed)
-    self.sedp_publish_single_reader(reader_data);
+    self.sedp_publish_single_user_reader(reader_data);
 
-    // Send the WriterUpdated notification on any existing writers on the readers's topic
-    // This will result in matching the endpoints if possible
-    let existing_writers = db.writers_on_topic(&reader_data.subscription_topic_data.topic_name());
+    // Send the WriterUpdated notification on any existing writers on the readers's
+    // topic This will result in matching the endpoints if possible
+    let existing_writers = db.writers_on_topic(reader_data.subscription_topic_data.topic_name());
     for writer in existing_writers {
       self.send_discovery_notification(DiscoveryNotificationType::WriterUpdated {
         discovered_writer_data: writer.clone(),
@@ -1831,7 +1839,7 @@ impl Discovery {
     }
   }
 
-  fn sedp_publish_single_writer(&self, writer_data: &DiscoveredWriterData) {
+  fn sedp_publish_single_user_writer(&self, writer_data: &DiscoveredWriterData) {
     if !writer_data
       .writer_proxy
       .remote_writer_guid
@@ -1880,13 +1888,6 @@ impl Discovery {
           // TODO: try again later?
         }
       }
-    }
-  }
-
-  fn sedp_publish_writers(&self) {
-    let db: std::sync::RwLockReadGuard<'_, DiscoveryDB> = discovery_db_read(&self.discovery_db);
-    for writer in db.get_all_local_topic_writers() {
-      self.sedp_publish_single_writer(writer);
     }
   }
 

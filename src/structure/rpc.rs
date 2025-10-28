@@ -34,6 +34,7 @@ pub struct SampleIdentity {
   Clone,
   Copy,
   Debug,
+  Default,
   PartialOrd,
   PartialEq,
   Ord,
@@ -51,13 +52,8 @@ pub enum RemoteExceptionCode {
   InvalidArgument,
   OutOfResources,
   UnknownOperation,
+  #[default]
   UnknownException,
-}
-
-impl Default for RemoteExceptionCode {
-  fn default() -> Self {
-    Self::UnknownException
-  }
 }
 
 #[derive(
