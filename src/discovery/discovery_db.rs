@@ -733,6 +733,36 @@ impl DiscoveryDB {
       .collect()
   }
 
+  pub fn writers_on_topic(&self, topic_name: &str) -> Vec<&DiscoveredWriterData> {
+    // Get external & local writers on the topic
+    let exernal_writers = self
+      .external_topic_writers
+      .values()
+      .filter(|wd| wd.publication_topic_data.topic_name() == topic_name);
+    let local_writers = self
+      .local_topic_writers
+      .values()
+      .filter(|wd| wd.publication_topic_data.topic_name() == topic_name);
+    // Combine & return
+    let combined: Vec<&DiscoveredWriterData> = exernal_writers.chain(local_writers).collect();
+    combined
+  }
+
+  pub fn readers_on_topic(&self, topic_name: &str) -> Vec<&DiscoveredReaderData> {
+    // Get external & local writers on the topic
+    let exernal_readers = self
+      .external_topic_readers
+      .values()
+      .filter(|rd| rd.subscription_topic_data.topic_name() == topic_name);
+    let local_readers = self
+      .local_topic_readers
+      .values()
+      .filter(|rd| rd.subscription_topic_data.topic_name() == topic_name);
+    // Combine & return
+    let combined: Vec<&DiscoveredReaderData> = exernal_readers.chain(local_readers).collect();
+    combined
+  }
+
   // // TODO: return iterator somehow?
   #[cfg(test)] // used only for testing
   pub fn get_local_topic_readers<T: TopicDescription>(

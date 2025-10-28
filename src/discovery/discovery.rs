@@ -135,9 +135,7 @@ mod with_key {
   use mio_extras::timer::Timer;
 
   use super::{DataReaderPlCdr, DataWriterPlCdr};
-  use crate::{
-    polling::TimerPolicy, serialization::pl_cdr_adapters::*, Key, Keyed, Topic, TopicKind,
-  };
+  use crate::{polling::TimerPolicy, serialization::pl_cdr_adapters::*, Key, Keyed, Topic, TopicKind};
 
   pub const TOPIC_KIND: TopicKind = TopicKind::WithKey;
 
@@ -751,10 +749,10 @@ impl Discovery {
                   return; // terminate event loop
                 }
                 DiscoveryCommand::AddLocalWriter { guid } => {
-                  self.sedp_publish_single_writer(guid);
+                  self.add_local_writer(guid);
                 }
                 DiscoveryCommand::AddLocalReader { guid } => {
-                  self.sedp_publish_single_reader(guid);
+                  self.add_local_reader(guid);
                 }
                 DiscoveryCommand::AddTopic { topic_name } => {
                   self.sedp_publish_topic(&topic_name);
@@ -1725,154 +1723,170 @@ impl Discovery {
     discovery_db_write(&self.discovery_db).topic_cleanup();
   }
 
-  pub fn sedp_publish_single_reader(&self, guid: GUID) {
-    let db = discovery_db_read(&self.discovery_db);
-    if let Some(reader_data) = db.get_local_topic_reader(guid) {
-      if !reader_data
-        .reader_proxy
-        .remote_reader_guid
-        .entity_id
-        .kind()
-        .is_user_defined()
+  fn sedp_publish_single_reader(&self, reader_data: &DiscoveredReaderData) {
+    if !reader_data
+      .reader_proxy
+      .remote_reader_guid
+      .entity_id
+      .kind()
+      .is_user_defined()
+    {
+      // Only readers of user-defined topics are published to discovery
+      return;
+    }
+
+    #[cfg(not(feature = "security"))]
+    let do_nonsecure_write = true;
+
+    #[cfg(feature = "security")]
+    let do_nonsecure_write = if let Some(security) = self.security_opt.as_ref() {
+      security.sedp_publish_single_reader(
+        &self.dcps_subscription.writer,
+        &self.dcps_subscriptions_secure.writer,
+        reader_data,
+      );
+      false
+    } else {
+      true // No security configured
+    };
+
+    if do_nonsecure_write {
+      match self
+        .dcps_subscription
+        .writer
+        .write(reader_data.clone(), None)
       {
-        // Only readers of user-defined topics are published to discovery
-        return;
-      }
-
-      #[cfg(not(feature = "security"))]
-      let do_nonsecure_write = true;
-
-      #[cfg(feature = "security")]
-      let do_nonsecure_write = if let Some(security) = self.security_opt.as_ref() {
-        security.sedp_publish_single_reader(
-          &self.dcps_subscription.writer,
-          &self.dcps_subscriptions_secure.writer,
-          reader_data,
-        );
-        false
-      } else {
-        true // No security configured
-      };
-
-      if do_nonsecure_write {
-        match self
-          .dcps_subscription
-          .writer
-          .write(reader_data.clone(), None)
-        {
-          Ok(()) => {
-            debug!(
-              "Published DCPSSubscription data on topic {}, reader guid {:?}, data {:?}",
-              reader_data.subscription_topic_data.topic_name(),
-              guid,
-              reader_data,
-            );
-          }
-          Err(e) => {
-            error!(
-              "Failed to publish DCPSSubscription data on topic {}, reader guid {:?}. Error: {e}",
-              reader_data.subscription_topic_data.topic_name(),
-              guid
-            );
-            // TODO: try again later?
-          }
+        Ok(()) => {
+          debug!(
+            "Published DCPSSubscription data on topic {}, reader guid {:?}, data {:?}",
+            reader_data.subscription_topic_data.topic_name(),
+            reader_data.reader_proxy.remote_reader_guid,
+            reader_data,
+          );
+        }
+        Err(e) => {
+          error!(
+            "Failed to publish DCPSSubscription data on topic {}, reader guid {:?}. Error: {e}",
+            reader_data.subscription_topic_data.topic_name(),
+            reader_data.reader_proxy.remote_reader_guid
+          );
+          // TODO: try again later?
         }
       }
-    } else {
-      warn!("Did not find a local reader {guid:?}");
     }
   }
 
-  pub fn sedp_publish_readers(&self) {
+  fn sedp_publish_readers(&self) {
     let db = discovery_db_read(&self.discovery_db);
-    let local_user_reader_guids = db
-      .get_all_local_topic_readers()
-      .filter(|p| {
-        p.reader_proxy
-          .remote_reader_guid
-          .entity_id
-          .kind()
-          .is_user_defined()
-      })
-      .map(|drd| drd.reader_proxy.remote_reader_guid);
-
-    for guid in local_user_reader_guids {
-      self.sedp_publish_single_reader(guid);
+    for reader in db.get_all_local_topic_readers() {
+      self.sedp_publish_single_reader(reader);
     }
   }
 
-  pub fn sedp_publish_single_writer(&self, guid: GUID) {
+  fn add_local_writer(&self, guid: GUID) {
+    // Get writer data from db
     let db = discovery_db_read(&self.discovery_db);
-    if let Some(writer_data) = db.get_local_topic_writer(guid) {
-      if !writer_data
-        .writer_proxy
-        .remote_writer_guid
-        .entity_id
-        .kind()
-        .is_user_defined()
-      {
-        // Only writers of user-defined topics are published to discovery
+    let writer_data = match db.get_local_topic_writer(guid) {
+      Some(d) => d,
+      None => {
+        warn!("Did not find a local writer {guid:?}");
         return;
       }
+    };
 
-      #[cfg(not(feature = "security"))]
-      let do_nonsecure_write = true;
+    // Publish it to SEDP (if needed)
+    self.sedp_publish_single_writer(writer_data);
 
-      #[cfg(feature = "security")]
-      let do_nonsecure_write = if let Some(security) = self.security_opt.as_ref() {
-        security.sedp_publish_single_writer(
-          &self.dcps_publication.writer,
-          &self.dcps_publications_secure.writer,
-          writer_data,
-        );
-        false
-      } else {
-        true // No security configured
-      };
-
-      if do_nonsecure_write {
-        match self
-          .dcps_publication
-          .writer
-          .write(writer_data.clone(), None)
-        {
-          Ok(()) => {
-            debug!(
-              "Published DCPSPublication data on topic {}, writer guid {:?}",
-              writer_data.publication_topic_data.topic_name(),
-              guid
-            );
-          }
-          Err(e) => {
-            error!(
-              "Failed to publish DCPSPublication data on topic {}, writer guid {:?}. Error: {e}",
-              writer_data.publication_topic_data.topic_name(),
-              guid
-            );
-            // TODO: try again later?
-          }
-        }
-      }
-    } else {
-      warn!("Did not find a local writer {guid:?}");
+    // Send the ReaderUpdated notification on any existing readers on the writer's topic
+    // This will result in matching the endpoints if possible
+    let existing_readers = db.readers_on_topic(&writer_data.publication_topic_data.topic_name());
+    for reader in existing_readers {
+      self.send_discovery_notification(DiscoveryNotificationType::ReaderUpdated {
+        discovered_reader_data: reader.clone(),
+      });
     }
   }
 
-  pub fn sedp_publish_writers(&self) {
+  fn add_local_reader(&self, guid: GUID) {
+    // Get reader data from db
+    let db = discovery_db_read(&self.discovery_db);
+    let reader_data = match db.get_local_topic_reader(guid) {
+      Some(d) => d,
+      None => {
+        warn!("Did not find a local reader {guid:?}");
+        return;
+      }
+    };
+
+    // Publish it to SEDP (if needed)
+    self.sedp_publish_single_reader(reader_data);
+
+    // Send the WriterUpdated notification on any existing writers on the readers's topic
+    // This will result in matching the endpoints if possible
+    let existing_writers = db.writers_on_topic(&reader_data.subscription_topic_data.topic_name());
+    for writer in existing_writers {
+      self.send_discovery_notification(DiscoveryNotificationType::WriterUpdated {
+        discovered_writer_data: writer.clone(),
+      });
+    }
+  }
+
+  fn sedp_publish_single_writer(&self, writer_data: &DiscoveredWriterData) {
+    if !writer_data
+      .writer_proxy
+      .remote_writer_guid
+      .entity_id
+      .kind()
+      .is_user_defined()
+    {
+      // Only writers of user-defined topics are published to discovery
+      return;
+    }
+
+    #[cfg(not(feature = "security"))]
+    let do_nonsecure_write = true;
+
+    #[cfg(feature = "security")]
+    let do_nonsecure_write = if let Some(security) = self.security_opt.as_ref() {
+      security.sedp_publish_single_writer(
+        &self.dcps_publication.writer,
+        &self.dcps_publications_secure.writer,
+        writer_data,
+      );
+      false
+    } else {
+      true // No security configured
+    };
+
+    if do_nonsecure_write {
+      match self
+        .dcps_publication
+        .writer
+        .write(writer_data.clone(), None)
+      {
+        Ok(()) => {
+          debug!(
+            "Published DCPSPublication data on topic {}, writer guid {:?}",
+            writer_data.publication_topic_data.topic_name(),
+            writer_data.writer_proxy.remote_writer_guid
+          );
+        }
+        Err(e) => {
+          error!(
+            "Failed to publish DCPSPublication data on topic {}, writer guid {:?}. Error: {e}",
+            writer_data.publication_topic_data.topic_name(),
+            writer_data.writer_proxy.remote_writer_guid
+          );
+          // TODO: try again later?
+        }
+      }
+    }
+  }
+
+  fn sedp_publish_writers(&self) {
     let db: std::sync::RwLockReadGuard<'_, DiscoveryDB> = discovery_db_read(&self.discovery_db);
-    let local_user_writer_guids = db
-      .get_all_local_topic_writers()
-      .filter(|p| {
-        p.writer_proxy
-          .remote_writer_guid
-          .entity_id
-          .kind()
-          .is_user_defined()
-      })
-      .map(|drd| drd.writer_proxy.remote_writer_guid);
-
-    for guid in local_user_writer_guids {
-      self.sedp_publish_single_writer(guid);
+    for writer in db.get_all_local_topic_writers() {
+      self.sedp_publish_single_writer(writer);
     }
   }
 
