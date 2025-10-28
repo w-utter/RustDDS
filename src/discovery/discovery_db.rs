@@ -749,7 +749,7 @@ impl DiscoveryDB {
   }
 
   pub fn readers_on_topic(&self, topic_name: &str) -> Vec<&DiscoveredReaderData> {
-    // Get external & local writers on the topic
+    // Get external & local readers on the topic
     let exernal_readers = self
       .external_topic_readers
       .values()
