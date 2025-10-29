@@ -83,7 +83,7 @@ impl RtpsReaderProxy {
 
   // We get a (discovery) update on the properties of this remote Reader.
   // Update those properties that Discovery tells us, but keep run-time data.
-  pub fn update(&mut self, update: &Self) {
+  pub fn update(&mut self, update: &Self, topic: &str) {
     if self.remote_reader_guid != update.remote_reader_guid {
       error!("Update tried to change ReaderProxy GUID!"); // This is like
                                                           // changing primary
@@ -98,7 +98,9 @@ impl RtpsReaderProxy {
     if self.unicast_locator_list != update.unicast_locator_list
       || self.multicast_locator_list != update.multicast_locator_list
     {
-      info!("Update changes Locators in ReaderProxy.");
+      info!("Update changes Locators in ReaderProxy. topic={topic:?}");
+      info!("Old: {:?}\n{:?}", self.unicast_locator_list, self.multicast_locator_list);
+      info!("New: {:?}\n{:?}", update.unicast_locator_list, update.multicast_locator_list);
       let mut unicasts = update.unicast_locator_list.clone();
       unicasts.retain(Self::not_loopback);
       self.unicast_locator_list = unicasts;
@@ -109,9 +111,14 @@ impl RtpsReaderProxy {
 
     self.expects_in_line_qos = update.expects_in_line_qos;
 
-    if self.qos != update.qos {
-      warn!("Upddate changes QoS in ReaderProxy.");
-      self.qos = update.qos.clone();
+    // Apply QoS policies that are defined (only).
+    // Undefined policies do not modify.
+    let updated_qos = self.qos.modify_by(&update.qos);
+
+    if self.qos != updated_qos {
+      warn!("Update changes QoS in ReaderProxy topic={topic:?}.");
+      info!("  details:\n  Old: {:?}\n  New: {:?}", self.qos, updated_qos);
+      self.qos = updated_qos;
     }
   }
 

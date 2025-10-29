@@ -15,6 +15,8 @@ loggers:
     level: warn
   rustdds::security::certificate:
     level: info
+  rustdds::rtps::rtps_reader_proxy:
+    level: info
 #  rustdds::dds::qos:
 #    level: trace
 #  rustdds::network::udp_listener:

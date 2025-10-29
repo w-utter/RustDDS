@@ -1499,7 +1499,7 @@ impl Writer {
     self
       .readers
       .entry(updated_reader_proxy.remote_reader_guid)
-      .and_modify(|rp| rp.update(updated_reader_proxy))
+      .and_modify(|rp| rp.update(updated_reader_proxy, &self.my_topic_name))
       .or_insert_with(|| {
         new = 1;
         let mut new_proxy = updated_reader_proxy.clone();
