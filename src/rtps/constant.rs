@@ -6,9 +6,11 @@ use mio_extras::channel as mio_channel;
 use crate::{
   discovery::{
     builtin_endpoint::BuiltinEndpointSet,
+    discovery::Discovery,
     sedp_messages::{DiscoveredReaderData, DiscoveredWriterData},
   },
   structure::guid::{EntityId, EntityKind, GuidPrefix, GUID},
+  QosPolicies,
 };
 
 pub const PREEMPTIVE_ACKNACK_PERIOD: Duration = Duration::from_secs(5);
@@ -20,136 +22,162 @@ pub const NACK_RESPONSE_DELAY: Duration = Duration::from_millis(200);
 pub const NACK_SUPPRESSION_DURATION: Duration = Duration::from_millis(0);
 
 // Helper list for initializing remote standard (non-secure) built-in readers
-pub const STANDARD_BUILTIN_READERS_INIT_LIST: &[(EntityId, EntityId, u32)] = &[
+// Structure is (builtin_writer_entity_id, builtin_reader_entity_id,
+// reader_as_BuiltinEndpointSet)
+pub const STANDARD_BUILTIN_READERS_INIT_LIST: &[(EntityId, EntityId, u32, QosPolicies)] = &[
   (
     EntityId::SPDP_BUILTIN_PARTICIPANT_WRITER, // SPDP
     EntityId::SPDP_BUILTIN_PARTICIPANT_READER,
     BuiltinEndpointSet::PARTICIPANT_DETECTOR,
+    Discovery::create_spdp_participant_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_WRITER, // SEDP ...
     EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_READER,
     BuiltinEndpointSet::SUBSCRIPTIONS_DETECTOR,
+    Discovery::subscriber_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_PUBLICATIONS_WRITER,
     EntityId::SEDP_BUILTIN_PUBLICATIONS_READER,
     BuiltinEndpointSet::PUBLICATIONS_DETECTOR,
+    Discovery::subscriber_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_TOPIC_WRITER,
     EntityId::SEDP_BUILTIN_TOPIC_READER,
     BuiltinEndpointSet::TOPICS_DETECTOR,
+    Discovery::subscriber_qos(),
   ),
   (
     EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER,
     EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_READER,
     BuiltinEndpointSet::PARTICIPANT_MESSAGE_DATA_READER,
+    Discovery::PARTICIPANT_MESSAGE_QOS,
   ),
 ];
 
 // Helper list for initializing remote standard (non-secure) built-in writers
-pub const STANDARD_BUILTIN_WRITERS_INIT_LIST: &[(EntityId, EntityId, u32)] = &[
+pub const STANDARD_BUILTIN_WRITERS_INIT_LIST: &[(EntityId, EntityId, u32, QosPolicies)] = &[
   (
     EntityId::SPDP_BUILTIN_PARTICIPANT_WRITER, // SPDP
     EntityId::SPDP_BUILTIN_PARTICIPANT_READER,
     BuiltinEndpointSet::PARTICIPANT_ANNOUNCER,
+    Discovery::create_spdp_participant_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_WRITER, // SEDP ...
     EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_READER,
     BuiltinEndpointSet::PUBLICATIONS_ANNOUNCER,
+    Discovery::publisher_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_PUBLICATIONS_WRITER,
     EntityId::SEDP_BUILTIN_PUBLICATIONS_READER,
     BuiltinEndpointSet::PUBLICATIONS_ANNOUNCER,
+    Discovery::publisher_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_TOPIC_WRITER,
     EntityId::SEDP_BUILTIN_TOPIC_READER,
     BuiltinEndpointSet::TOPICS_ANNOUNCER,
+    Discovery::publisher_qos(),
   ),
   (
     EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER,
     EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_READER,
     BuiltinEndpointSet::PARTICIPANT_MESSAGE_DATA_WRITER,
+    Discovery::PARTICIPANT_MESSAGE_QOS,
   ),
 ];
 
 // Helper list for initializing the authentication topic built-in reader
 #[cfg(feature = "security")]
-pub const AUTHENTICATION_BUILTIN_READERS_INIT_LIST: &[(EntityId, EntityId, u32)] = &[(
-  EntityId::P2P_BUILTIN_PARTICIPANT_STATELESS_WRITER,
-  EntityId::P2P_BUILTIN_PARTICIPANT_STATELESS_READER,
-  BuiltinEndpointSet::PARTICIPANT_STATELESS_MESSAGE_READER,
-)];
+pub const AUTHENTICATION_BUILTIN_READERS_INIT_LIST: &[(EntityId, EntityId, u32, QosPolicies)] =
+  &[(
+    EntityId::P2P_BUILTIN_PARTICIPANT_STATELESS_WRITER,
+    EntityId::P2P_BUILTIN_PARTICIPANT_STATELESS_READER,
+    BuiltinEndpointSet::PARTICIPANT_STATELESS_MESSAGE_READER,
+    Discovery::create_participant_stateless_message_qos(),
+  )];
 
 // Helper list for initializing the authentication topic built-in writer
 #[cfg(feature = "security")]
-pub const AUTHENTICATION_BUILTIN_WRITERS_INIT_LIST: &[(EntityId, EntityId, u32)] = &[(
-  EntityId::P2P_BUILTIN_PARTICIPANT_STATELESS_WRITER,
-  EntityId::P2P_BUILTIN_PARTICIPANT_STATELESS_READER,
-  BuiltinEndpointSet::PARTICIPANT_STATELESS_MESSAGE_WRITER,
-)];
+pub const AUTHENTICATION_BUILTIN_WRITERS_INIT_LIST: &[(EntityId, EntityId, u32, QosPolicies)] =
+  &[(
+    EntityId::P2P_BUILTIN_PARTICIPANT_STATELESS_WRITER,
+    EntityId::P2P_BUILTIN_PARTICIPANT_STATELESS_READER,
+    BuiltinEndpointSet::PARTICIPANT_STATELESS_MESSAGE_WRITER,
+    Discovery::create_participant_stateless_message_qos(),
+  )];
 
 // Helper list for initializing remote secure built-in readers
 #[cfg(feature = "security")]
-pub const SECURE_BUILTIN_READERS_INIT_LIST: &[(EntityId, EntityId, u32)] = &[
+pub const SECURE_BUILTIN_READERS_INIT_LIST: &[(EntityId, EntityId, u32, QosPolicies)] = &[
   (
     EntityId::SPDP_RELIABLE_BUILTIN_PARTICIPANT_SECURE_WRITER, // SPDP
     EntityId::SPDP_RELIABLE_BUILTIN_PARTICIPANT_SECURE_READER,
     BuiltinEndpointSet::PARTICIPANT_SECURE_READER,
+    Discovery::subscriber_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_PUBLICATIONS_SECURE_WRITER, // SEDP ...
     EntityId::SEDP_BUILTIN_PUBLICATIONS_SECURE_READER,
     BuiltinEndpointSet::PUBLICATIONS_SECURE_READER,
+    Discovery::subscriber_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_SECURE_WRITER,
     EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_SECURE_READER,
     BuiltinEndpointSet::SUBSCRIPTIONS_SECURE_READER,
+    Discovery::subscriber_qos(),
   ),
   (
     EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_SECURE_WRITER,
     EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_SECURE_READER,
     BuiltinEndpointSet::PARTICIPANT_MESSAGE_SECURE_READER,
+    Discovery::subscriber_qos(),
   ),
   (
     EntityId::P2P_BUILTIN_PARTICIPANT_VOLATILE_SECURE_WRITER,
     EntityId::P2P_BUILTIN_PARTICIPANT_VOLATILE_SECURE_READER,
     BuiltinEndpointSet::PARTICIPANT_VOLATILE_MESSAGE_SECURE_READER,
+    Discovery::create_participant_volatile_message_secure_qos(),
   ),
 ];
 
 // Helper list for initializing remote secure built-in writers
 #[cfg(feature = "security")]
-pub const SECURE_BUILTIN_WRITERS_INIT_LIST: &[(EntityId, EntityId, u32)] = &[
+pub const SECURE_BUILTIN_WRITERS_INIT_LIST: &[(EntityId, EntityId, u32, QosPolicies)] = &[
   (
     EntityId::SPDP_RELIABLE_BUILTIN_PARTICIPANT_SECURE_WRITER, // SPDP
     EntityId::SPDP_RELIABLE_BUILTIN_PARTICIPANT_SECURE_READER,
     BuiltinEndpointSet::PARTICIPANT_SECURE_WRITER,
+    Discovery::publisher_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_PUBLICATIONS_SECURE_WRITER, // SEDP ...
     EntityId::SEDP_BUILTIN_PUBLICATIONS_SECURE_READER,
     BuiltinEndpointSet::PUBLICATIONS_SECURE_WRITER,
+    Discovery::publisher_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_SECURE_WRITER,
     EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_SECURE_READER,
     BuiltinEndpointSet::SUBSCRIPTIONS_SECURE_WRITER,
+    Discovery::publisher_qos(),
   ),
   (
     EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_SECURE_WRITER,
     EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_SECURE_READER,
     BuiltinEndpointSet::PARTICIPANT_MESSAGE_SECURE_WRITER,
+    Discovery::publisher_qos(),
   ),
   (
     EntityId::P2P_BUILTIN_PARTICIPANT_VOLATILE_SECURE_WRITER,
     EntityId::P2P_BUILTIN_PARTICIPANT_VOLATILE_SECURE_READER,
     BuiltinEndpointSet::PARTICIPANT_VOLATILE_MESSAGE_SECURE_WRITER,
+    Discovery::create_participant_volatile_message_secure_qos(),
   ),
 ];
 

@@ -23,7 +23,7 @@ use crate::{
   messages::submessages::submessages::AckSubmessage,
   network::{udp_listener::UDPListener, udp_sender::UDPSender},
   polling::new_simple_timer,
-  qos::HasQoSPolicy,
+  //qos::HasQoSPolicy,
   rtps::{
     constant::*,
     message_receiver::MessageReceiver,
@@ -37,6 +37,8 @@ use crate::{
     entity::RTPSEntity,
     guid::{EntityId, GuidPrefix, TokenDecode, GUID},
   },
+  //QosPolicyBuilder,
+  //QosPolicies,
   EndpointDescription,
 };
 #[cfg(feature = "security")]
@@ -565,61 +567,60 @@ impl DPEventLoop {
     );
 
     #[cfg(feature = "security")]
-    let (readers_init_list, writers_init_list) = match &self.security_plugins_opt {
-      None => {
-        // No security enabled, just the standard endpoints
-        let readers_init_list = STANDARD_BUILTIN_READERS_INIT_LIST.to_vec();
-        let writers_init_list = STANDARD_BUILTIN_WRITERS_INIT_LIST.to_vec();
+    let (readers_init_list, writers_init_list) = if self.security_plugins_opt.is_none() {
+      // No security enabled, just the standard endpoints
+      let readers_init_list = STANDARD_BUILTIN_READERS_INIT_LIST.to_vec();
+      let writers_init_list = STANDARD_BUILTIN_WRITERS_INIT_LIST.to_vec();
 
-        (readers_init_list, writers_init_list)
-      }
-      Some(_handle) => {
-        // Security enabled. The endpoints are selected based on the authentication
-        // status of the remote participant
-        let mut readers_init_list = vec![];
-        let mut writers_init_list = vec![];
+      (readers_init_list, writers_init_list)
+    } else {
+      // Security enabled. The endpoints are selected based on the authentication
+      // status of the remote participant
+      let mut readers_init_list = vec![];
+      let mut writers_init_list = vec![];
 
-        match db.get_authentication_status(participant_guid_prefix) {
-          Some(AuthenticationStatus::Authenticating) => {
-            // Add just the stateless endpoint used for authentication
-            readers_init_list.extend_from_slice(AUTHENTICATION_BUILTIN_READERS_INIT_LIST);
-            writers_init_list.extend_from_slice(AUTHENTICATION_BUILTIN_WRITERS_INIT_LIST);
-          }
-          Some(AuthenticationStatus::Authenticated) => {
-            // Match all builtin endpoints
-            readers_init_list.extend_from_slice(STANDARD_BUILTIN_READERS_INIT_LIST);
-            writers_init_list.extend_from_slice(STANDARD_BUILTIN_WRITERS_INIT_LIST);
-            readers_init_list.extend_from_slice(SECURE_BUILTIN_READERS_INIT_LIST);
-            writers_init_list.extend_from_slice(SECURE_BUILTIN_WRITERS_INIT_LIST);
-          }
-          Some(AuthenticationStatus::Unauthenticated) => {
-            // Match only the regular builtin endpoints (see Security spec section 8.8.2.1)
-            readers_init_list.extend_from_slice(STANDARD_BUILTIN_READERS_INIT_LIST);
-            writers_init_list.extend_from_slice(STANDARD_BUILTIN_WRITERS_INIT_LIST);
-          }
-          _ => {
-            // Not adding any endpoints when authentication status is Rejected
-            // or None
-          }
+      match db.get_authentication_status(participant_guid_prefix) {
+        Some(AuthenticationStatus::Authenticating) => {
+          // Add just the stateless endpoint used for authentication
+          readers_init_list.extend_from_slice(AUTHENTICATION_BUILTIN_READERS_INIT_LIST);
+          writers_init_list.extend_from_slice(AUTHENTICATION_BUILTIN_WRITERS_INIT_LIST);
         }
-        (readers_init_list, writers_init_list)
+        Some(AuthenticationStatus::Authenticated) => {
+          // Match all builtin endpoints
+          readers_init_list.extend_from_slice(STANDARD_BUILTIN_READERS_INIT_LIST);
+          writers_init_list.extend_from_slice(STANDARD_BUILTIN_WRITERS_INIT_LIST);
+          readers_init_list.extend_from_slice(SECURE_BUILTIN_READERS_INIT_LIST);
+          writers_init_list.extend_from_slice(SECURE_BUILTIN_WRITERS_INIT_LIST);
+        }
+        Some(AuthenticationStatus::Unauthenticated) => {
+          // Match only the regular builtin endpoints (see Security spec section 8.8.2.1)
+          readers_init_list.extend_from_slice(STANDARD_BUILTIN_READERS_INIT_LIST);
+          writers_init_list.extend_from_slice(STANDARD_BUILTIN_WRITERS_INIT_LIST);
+        }
+        _ => {
+          // Not adding any endpoints when authentication status is Rejected
+          // or None
+        }
       }
+      (readers_init_list, writers_init_list)
     };
 
-    // Update local writers
-    for (writer_eid, reader_eid, endpoint) in &readers_init_list {
+    // Update local writers, i.e. reader_proxies inside them
+    for (writer_eid, reader_eid, reader_endpoint_set_elem, reader_qos) in &readers_init_list {
       if let Some(writer) = self.writers.get_mut(writer_eid) {
         debug!("update_discovery_writer - {:?}", writer.topic_name());
 
         if discovered_participant
           .available_builtin_endpoints
-          .contains(*endpoint)
+          .contains(*reader_endpoint_set_elem)
         {
-          let reader_proxy = discovered_participant.as_reader_proxy(true, Some(*reader_eid));
+          let reader_proxy =
+            discovered_participant.get_builtin_reader_proxy(*reader_eid, reader_qos);
 
           // Get the QoS for the built-in topic from the local writer
-          let mut qos = writer.qos();
-          // special case by RTPS 2.3 spec Section
+          let mut reader_qos = reader_qos.clone();
+
+          // special case by RTPS 2.3 / 2.5 spec Section
           // "8.4.13.3 BuiltinParticipantMessageWriter and
           // BuiltinParticipantMessageReader QoS"
           if *reader_eid == EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_READER
@@ -627,13 +628,16 @@ impl DPEventLoop {
               .builtin_endpoint_qos
               .is_some_and(|beq| beq.is_best_effort())
           {
-            qos.reliability = Some(policy::Reliability::BestEffort);
+            reader_qos.reliability = Some(policy::Reliability::BestEffort);
+            // This notifies our `writer` that the reader over the wire is
+            // BestEffort, and will therefore not send ACKNACKs. Now the
+            // `writer` knows not to expect them, and avoid stalling.
           };
 
-          writer.update_reader_proxy(&reader_proxy, &qos);
+          writer.update_reader_proxy(&reader_proxy, &reader_qos);
           debug!(
             "update_discovery writer - endpoint {:?} - {:?}",
-            endpoint, discovered_participant.participant_guid
+            reader_endpoint_set_elem, discovered_participant.participant_guid
           );
         }
       }
@@ -641,23 +645,20 @@ impl DPEventLoop {
     // update local readers.
     // list to be looped over is the same as above, but now
     // EntityIds are for announcers
-    for (writer_eid, reader_eid, endpoint) in &writers_init_list {
+    for (writer_eid, reader_eid, writer_endpoint_set_elem, writer_qos) in &writers_init_list {
       if let Some(reader) = self.message_receiver.available_readers.get_mut(reader_eid) {
         debug!("try update_discovery_reader - {:?}", reader.topic_name());
 
         if discovered_participant
           .available_builtin_endpoints
-          .contains(*endpoint)
+          .contains(*writer_endpoint_set_elem)
         {
-          let wp = discovered_participant.as_writer_proxy(true, Some(*writer_eid));
+          let writer_proxy = discovered_participant.get_builtin_writer_proxy(*writer_eid);
 
-          // Get the QoS for the built-in topic from the local reader
-          let qos = reader.qos();
-
-          reader.update_writer_proxy(wp, &qos);
+          reader.update_writer_proxy(writer_proxy, writer_qos);
           debug!(
             "update_discovery_reader - endpoint {:?} - {:?}",
-            *endpoint, discovered_participant.participant_guid
+            *writer_endpoint_set_elem, discovered_participant.participant_guid
           );
         }
       }
@@ -743,17 +744,18 @@ impl DPEventLoop {
             // Signal Secure discovery to exchange keys with the remote
             // TODO: do this only at first encounter with the remote / before keys have been
             // sent, not every time
-            if let Err(e) = self.discovery_command_sender.send(
-              DiscoveryCommand::StartKeyExchangeWithRemoteEndpoint {
+            self
+              .discovery_command_sender
+              .send(DiscoveryCommand::StartKeyExchangeWithRemoteEndpoint {
                 local_endpoint_guid: local_writer_guid,
                 remote_endpoint_guid: remote_reader_guid,
-              },
-            ) {
-              error!(
-                "Could not signal Secure Discovery to start the key exchange with remote reader \
-                 {remote_reader_guid:?}. Reason: {e}."
-              );
-            }
+              })
+              .unwrap_or_else(|e| {
+                error!(
+                  "Could not signal Secure Discovery to start the key exchange with remote reader \
+                   {remote_reader_guid:?}. Reason: {e}."
+                )
+              });
             true // match_to_reader
           }
         } else {
