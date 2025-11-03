@@ -170,6 +170,10 @@ The DDS specification specifies manual memory management in the sense that many 
 * Fix bug / race condition in Discovery: Previously known Endpoints were ignored.
 * Bug fix: CDR serializer endianness was indicated wrong.
 
+### Version 0.11.7
+* More correct QoS settings for built-in (Discovery) topics.
+
+
 ## Version 0.10.0
 The `DeserializerAdpter` interface for attaching serialization formats to RTPS was extended
 to support deserialization with a "seed" value. This allows the deserialization process
