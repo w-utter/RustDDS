@@ -3,7 +3,7 @@ use std::io;
 use bytes::Bytes;
 use enumflags2::BitFlags;
 #[allow(unused_imports)]
-use log::{debug, error, trace, warn, info};
+use log::{debug, error, info, trace, warn};
 use speedy::{Context, Readable, Writable, Writer};
 
 use crate::{

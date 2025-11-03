@@ -35,19 +35,19 @@ pub const STANDARD_BUILTIN_READERS_INIT_LIST: &[(EntityId, EntityId, u32, QosPol
     EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_WRITER, // SEDP ...
     EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_READER,
     BuiltinEndpointSet::SUBSCRIPTIONS_DETECTOR,
-    Discovery::subscriber_qos(),
+    Discovery::builtin_subscriber_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_PUBLICATIONS_WRITER,
     EntityId::SEDP_BUILTIN_PUBLICATIONS_READER,
     BuiltinEndpointSet::PUBLICATIONS_DETECTOR,
-    Discovery::subscriber_qos(),
+    Discovery::builtin_subscriber_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_TOPIC_WRITER,
     EntityId::SEDP_BUILTIN_TOPIC_READER,
     BuiltinEndpointSet::TOPICS_DETECTOR,
-    Discovery::subscriber_qos(),
+    Discovery::builtin_subscriber_qos(),
   ),
   (
     EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER,
@@ -69,19 +69,19 @@ pub const STANDARD_BUILTIN_WRITERS_INIT_LIST: &[(EntityId, EntityId, u32, QosPol
     EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_WRITER, // SEDP ...
     EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_READER,
     BuiltinEndpointSet::PUBLICATIONS_ANNOUNCER,
-    Discovery::publisher_qos(),
+    Discovery::builtin_publisher_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_PUBLICATIONS_WRITER,
     EntityId::SEDP_BUILTIN_PUBLICATIONS_READER,
     BuiltinEndpointSet::PUBLICATIONS_ANNOUNCER,
-    Discovery::publisher_qos(),
+    Discovery::builtin_publisher_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_TOPIC_WRITER,
     EntityId::SEDP_BUILTIN_TOPIC_READER,
     BuiltinEndpointSet::TOPICS_ANNOUNCER,
-    Discovery::publisher_qos(),
+    Discovery::builtin_publisher_qos(),
   ),
   (
     EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER,
@@ -118,25 +118,25 @@ pub const SECURE_BUILTIN_READERS_INIT_LIST: &[(EntityId, EntityId, u32, QosPolic
     EntityId::SPDP_RELIABLE_BUILTIN_PARTICIPANT_SECURE_WRITER, // SPDP
     EntityId::SPDP_RELIABLE_BUILTIN_PARTICIPANT_SECURE_READER,
     BuiltinEndpointSet::PARTICIPANT_SECURE_READER,
-    Discovery::subscriber_qos(),
+    Discovery::builtin_subscriber_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_PUBLICATIONS_SECURE_WRITER, // SEDP ...
     EntityId::SEDP_BUILTIN_PUBLICATIONS_SECURE_READER,
     BuiltinEndpointSet::PUBLICATIONS_SECURE_READER,
-    Discovery::subscriber_qos(),
+    Discovery::builtin_subscriber_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_SECURE_WRITER,
     EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_SECURE_READER,
     BuiltinEndpointSet::SUBSCRIPTIONS_SECURE_READER,
-    Discovery::subscriber_qos(),
+    Discovery::builtin_subscriber_qos(),
   ),
   (
     EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_SECURE_WRITER,
     EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_SECURE_READER,
     BuiltinEndpointSet::PARTICIPANT_MESSAGE_SECURE_READER,
-    Discovery::subscriber_qos(),
+    Discovery::builtin_subscriber_qos(),
   ),
   (
     EntityId::P2P_BUILTIN_PARTICIPANT_VOLATILE_SECURE_WRITER,
@@ -153,25 +153,25 @@ pub const SECURE_BUILTIN_WRITERS_INIT_LIST: &[(EntityId, EntityId, u32, QosPolic
     EntityId::SPDP_RELIABLE_BUILTIN_PARTICIPANT_SECURE_WRITER, // SPDP
     EntityId::SPDP_RELIABLE_BUILTIN_PARTICIPANT_SECURE_READER,
     BuiltinEndpointSet::PARTICIPANT_SECURE_WRITER,
-    Discovery::publisher_qos(),
+    Discovery::builtin_publisher_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_PUBLICATIONS_SECURE_WRITER, // SEDP ...
     EntityId::SEDP_BUILTIN_PUBLICATIONS_SECURE_READER,
     BuiltinEndpointSet::PUBLICATIONS_SECURE_WRITER,
-    Discovery::publisher_qos(),
+    Discovery::builtin_publisher_qos(),
   ),
   (
     EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_SECURE_WRITER,
     EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_SECURE_READER,
     BuiltinEndpointSet::SUBSCRIPTIONS_SECURE_WRITER,
-    Discovery::publisher_qos(),
+    Discovery::builtin_publisher_qos(),
   ),
   (
     EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_SECURE_WRITER,
     EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_SECURE_READER,
     BuiltinEndpointSet::PARTICIPANT_MESSAGE_SECURE_WRITER,
-    Discovery::publisher_qos(),
+    Discovery::builtin_publisher_qos(),
   ),
   (
     EntityId::P2P_BUILTIN_PARTICIPANT_VOLATILE_SECURE_WRITER,

@@ -79,8 +79,13 @@ pub struct QosPolicyBuilder {
   history: Option<policy::History>,
   resource_limits: Option<policy::ResourceLimits>,
   lifespan: Option<policy::Lifespan>,
-  #[cfg(feature = "security")]
-  property: Option<policy::Property>,
+  // #[cfg(feature = "security")]
+  // property: Option<policy::Property>,
+  //
+  // QoSPolicyBuilder does not support (security) properties, because we would like to
+  // be able to make `const` QosPolicies with it. This is not possible with
+  // `policy::Property`, because it contains `Vec`, which again is incompatible with
+  // `const`. Currently, we have no need for this, either.
 }
 
 impl QosPolicyBuilder {
@@ -99,8 +104,6 @@ impl QosPolicyBuilder {
       history: None,
       resource_limits: None,
       lifespan: None,
-      #[cfg(feature = "security")]
-      property: None,
     }
   }
 
@@ -188,13 +191,6 @@ impl QosPolicyBuilder {
     self
   }
 
-  #[cfg(feature = "security")]
-  #[must_use]
-  pub fn property(mut self, property: policy::Property) -> Self {
-    self.property = Some(property);
-    self
-  }
-
   pub const fn build(self) -> QosPolicies {
     QosPolicies {
       durability: self.durability,
@@ -210,7 +206,7 @@ impl QosPolicyBuilder {
       resource_limits: self.resource_limits,
       lifespan: self.lifespan,
       #[cfg(feature = "security")]
-      property: self.property,
+      property: None,
     }
   }
 }
@@ -322,6 +318,7 @@ impl QosPolicies {
   /// Constructs a QosPolicy, where each policy is taken from `self`,
   /// and overwritten with those policies from `other` that are defined.
   #[must_use]
+  // TODO: Make this "const" when support for const .or() arrives in stable Rust.
   pub fn modify_by(&self, other: &Self) -> Self {
     Self {
       durability: other.durability.or(self.durability),

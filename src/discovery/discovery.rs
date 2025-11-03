@@ -285,34 +285,6 @@ impl Discovery {
   #[cfg(feature = "security")]
   const CACHED_SECURE_DISCOVERY_MESSAGE_RESEND_PERIOD: StdDuration = StdDuration::from_secs(1);
 
-  pub(crate) const PARTICIPANT_MESSAGE_QOS: QosPolicies = QosPolicies {
-    durability: Some(Durability::TransientLocal),
-    presentation: None,
-    deadline: None,
-    latency_budget: None,
-    ownership: None,
-    liveliness: None,
-    time_based_filter: None,
-    // Note RTPS 2.3 / 2.5 spec Section
-    // "8.4.13.3 BuiltinParticipantMessageWriter and
-    // BuiltinParticipantMessageReader QoS":
-    // "BuiltinParticipantMessageWriter shall use reliability.kind = RELIABLE_RELIABILITY_QOS."
-    // but thre reader side can use either Realiability setting.
-    // SPDPdiscoveredParticipantData may indicate over the wire that
-    // their reader for these messages is BestEffort, via builtinEndpointQos,
-    // which writers must notice. This allows them to not expect ACKNACKs from BestEffort
-    // Reader andavoid stalling.
-    reliability: Some(Reliability::Reliable {
-      max_blocking_time: Duration::from_millis(10),
-    }),
-    destination_order: None,
-    history: Some(History::KeepLast { depth: 1 }),
-    resource_limits: None,
-    lifespan: None,
-    #[cfg(feature = "security")]
-    property: None,
-  };
-
   #[allow(clippy::too_many_arguments)]
   pub fn new(
     domain_participant: DomainParticipantWeak,
@@ -345,8 +317,8 @@ impl Discovery {
     }
 
     let poll = try_construct!(mio_06::Poll::new(), "Failed to allocate discovery poll.");
-    let discovery_subscriber_qos = Self::subscriber_qos();
-    let discovery_publisher_qos = Self::publisher_qos();
+    let discovery_subscriber_qos = Self::builtin_subscriber_qos();
+    let discovery_publisher_qos = Self::builtin_publisher_qos();
 
     // Create DDS Publisher and Subscriber for Discovery.
     // These are needed to create DataWriter and DataReader objects
@@ -1936,7 +1908,7 @@ impl Discovery {
     }
   }
 
-  pub const fn subscriber_qos() -> QosPolicies {
+  pub const fn builtin_subscriber_qos_builder() -> QosPolicyBuilder {
     // The Subscriber QoS is specified in DDS Spec v1.4 Section
     // "2.2.5 Built-in Topics"
     QosPolicyBuilder::new()
@@ -1962,19 +1934,22 @@ impl Discovery {
       // use somewhat higher to avoid losing data at the receiver in case
       // it comes in bursts and there is some delay in Discovery processing.
       .history(History::KeepLast { depth: 4 })
-      // TODO:
-      // Spec says all resource limits should be "LENGTH_UNLIMITED",
-      // but that may lead to memory exhaustion.
-      //
-      // .resource_limits(ResourceLimits { // TODO: Maybe lower limits would suffice?
-      //   max_instances: std::i32::MAX,
-      //   max_samples: std::i32::MAX,
-      //   max_samples_per_instance: std::i32::MAX,
-      // })
-      .build()
+    // TODO:
+    // Spec says all resource limits should be "LENGTH_UNLIMITED",
+    // but that may lead to memory exhaustion.
+    //
+    // .resource_limits(ResourceLimits { // TODO: Maybe lower limits would
+    // suffice?   max_instances: std::i32::MAX,
+    //   max_samples: std::i32::MAX,
+    //   max_samples_per_instance: std::i32::MAX,
+    // })
   }
 
-  pub const fn publisher_qos() -> QosPolicies {
+  pub const fn builtin_subscriber_qos() -> QosPolicies {
+    Self::builtin_subscriber_qos_builder().build()
+  }
+
+  pub const fn builtin_publisher_qos() -> QosPolicies {
     // TODO: Check if this definition is correct (spec?)
     // Problem: DDS spec v1.4 Section 2.2.5 gives Subscriber QoS policies,
     // but does not mention publisher QoS for built-in topics.
@@ -2015,13 +1990,37 @@ impl Discovery {
   // SPDPbuiltinParticipantWriter Table 8.79 - Attributes of the RTPS
   // StatelessWriter used by the SPDP at least that is is BestEffort.
   pub const fn create_spdp_participant_qos() -> QosPolicies {
-    QosPolicyBuilder::new()
+    Self::builtin_subscriber_qos_builder()
       .reliability(Reliability::BestEffort)
       // Use depth=8 to avoid losing data when we receive notifications
       // faster than we can process.
       .history(History::KeepLast { depth: 8 })
       .build()
   }
+
+  // Note: Topics "participant" and "participant message" are differet things.
+  pub(crate) const PARTICIPANT_MESSAGE_QOS: QosPolicies = Self::builtin_subscriber_qos_builder()
+    .reliability(Reliability::Reliable {
+      max_blocking_time: Duration::from_millis(10),
+    })
+    .history(History::KeepLast { depth: 1 })
+    .build();
+
+  // Note RTPS 2.3 / 2.5 spec Section
+  // "8.4.13.3 BuiltinParticipantMessageWriter and
+  // BuiltinParticipantMessageReader QoS":
+  // "BuiltinParticipantMessageWriter shall use reliability.kind =
+  // RELIABLE_RELIABILITY_QOS."
+  //
+  // But the reader side can use either Realiability setting.
+  // SPDPdiscoveredParticipantData may indicate over the wire that
+  // their reader for these messages is BestEffort, via builtinEndpointQos,
+  // which writers must notice. This allows them to not expect ACKNACKs from
+  // BestEffort Reader and avoid stalling.
+
+  // TODO: Check if the following built-in QoS policies should also be based on
+  // builtin_subscriber_qos_builder rather than empty QoS policy. The change
+  // requires interop testing with differet DDSs, including security.
 
   #[cfg(feature = "security")]
   pub const fn create_participant_stateless_message_qos() -> QosPolicies {

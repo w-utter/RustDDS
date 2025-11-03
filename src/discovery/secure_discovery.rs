@@ -199,7 +199,8 @@ impl SecureDiscovery {
       })?;
 
     // Endpoint tokens
-    for (writer_eid, reader_eid, _reader_endpoint) in SECURE_BUILTIN_READERS_INIT_LIST {
+    for (writer_eid, reader_eid, _reader_endpoint, _reader_qos) in SECURE_BUILTIN_READERS_INIT_LIST
+    {
       // Tokens are set for all but the volatile endpoint
       if *writer_eid != EntityId::P2P_BUILTIN_PARTICIPANT_VOLATILE_SECURE_WRITER {
         let local_writer_guid = GUID::new(participant_guid_prefix, *writer_eid);
@@ -2197,7 +2198,7 @@ impl SecureDiscovery {
     }
 
     // Send local writers' crypto tokens to the remote readers
-    for (writer_eid, reader_eid, reader_endpoint) in SECURE_BUILTIN_READERS_INIT_LIST {
+    for (writer_eid, reader_eid, reader_endpoint, _reader_qos) in SECURE_BUILTIN_READERS_INIT_LIST {
       if remotes_builtin_endpoints.contains(*reader_endpoint)
       // Key exchange is not done for the volatile topic (its keys are derived from the shared secret)
         && *reader_eid != EntityId::P2P_BUILTIN_PARTICIPANT_VOLATILE_SECURE_READER
@@ -2243,7 +2244,7 @@ impl SecureDiscovery {
     }
 
     // Send local readers' crypto tokens to the remote writers
-    for (writer_eid, reader_eid, writer_endpoint) in SECURE_BUILTIN_WRITERS_INIT_LIST {
+    for (writer_eid, reader_eid, writer_endpoint, _writer_qos) in SECURE_BUILTIN_WRITERS_INIT_LIST {
       if remotes_builtin_endpoints.contains(*writer_endpoint)
         // Key exchange is not done for the volatile topic (its keys are derived from the shared secret)
         && *writer_eid != EntityId::P2P_BUILTIN_PARTICIPANT_VOLATILE_SECURE_WRITER
@@ -2744,7 +2745,7 @@ fn register_remote_to_crypto(
   trace!("Registered remote participant {remote_guidp:?} with the crypto plugin.");
 
   // Register remote's secure built-in readers
-  for (writer_eid, reader_eid, _reader_endpoint) in SECURE_BUILTIN_READERS_INIT_LIST {
+  for (writer_eid, reader_eid, _reader_endpoint, _reader_qos) in SECURE_BUILTIN_READERS_INIT_LIST {
     let remote_reader_guid = GUID::new(remote_guidp, *reader_eid);
     let local_writer_guid = GUID::new(local_guidp, *writer_eid);
 
@@ -2762,7 +2763,7 @@ fn register_remote_to_crypto(
   }
 
   // Register remote's secure built-in writers
-  for (writer_eid, reader_eid, _writer_endpoint) in SECURE_BUILTIN_WRITERS_INIT_LIST {
+  for (writer_eid, reader_eid, _writer_endpoint, _writer_qos) in SECURE_BUILTIN_WRITERS_INIT_LIST {
     let remote_writer_guid = GUID::new(remote_guidp, *writer_eid);
     let local_reader_guid = GUID::new(local_guidp, *reader_eid);
 

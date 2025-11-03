@@ -167,18 +167,13 @@ impl RtpsReaderProxy {
 
   pub fn from_reader(reader: &ReaderIngredients, domain_participant: &DomainParticipant) -> Self {
     let mut self_locators = domain_participant.self_locators(); // This clones a map of locator lists.
-    let (unicast_token, multicast_token) =
-      if reader.guid.entity_id.kind().is_user_defined() {
-        (USER_TRAFFIC_LISTENER_TOKEN, USER_TRAFFIC_MUL_LISTENER_TOKEN)
-      } else {
-        (DISCOVERY_LISTENER_TOKEN, DISCOVERY_MUL_LISTENER_TOKEN)
-      };
-    let unicast_locator_list = self_locators
-      .remove(&unicast_token)
-      .unwrap_or_default();
-    let multicast_locator_list = self_locators
-      .remove(&multicast_token)
-      .unwrap_or_default();
+    let (unicast_token, multicast_token) = if reader.guid.entity_id.kind().is_user_defined() {
+      (USER_TRAFFIC_LISTENER_TOKEN, USER_TRAFFIC_MUL_LISTENER_TOKEN)
+    } else {
+      (DISCOVERY_LISTENER_TOKEN, DISCOVERY_MUL_LISTENER_TOKEN)
+    };
+    let unicast_locator_list = self_locators.remove(&unicast_token).unwrap_or_default();
+    let multicast_locator_list = self_locators.remove(&multicast_token).unwrap_or_default();
     Self {
       remote_reader_guid: reader.guid,
       remote_group_entity_id: EntityId::UNKNOWN, // TODO
