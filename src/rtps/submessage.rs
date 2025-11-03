@@ -2,7 +2,8 @@ use std::io;
 
 use bytes::Bytes;
 use enumflags2::BitFlags;
-use log::{debug, error, trace};
+#[allow(unused_imports)]
+use log::{debug, error, trace, warn, info};
 use speedy::{Context, Readable, Writable, Writer};
 
 use crate::{
@@ -283,7 +284,7 @@ impl Submessage {
           trace!("Submessage was {:?}", &sub_buffer);
         } else {
           // Kind is 0x00 - 0x7F, it should be in the standard.
-          error!("Received unknown submessage kind {unknown_kind:?}");
+          info!("Received unknown submessage kind {unknown_kind:?}");
           debug!("Submessage was {:?}", &sub_buffer);
         }
         Ok(None)
