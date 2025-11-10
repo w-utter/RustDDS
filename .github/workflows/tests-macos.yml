@@ -10,7 +10,10 @@ permissions: read-all
 jobs:
 
   test-on-macos:
-    runs-on: macos-latest
+    # We run tests on macos-14 instead of macos-latest, because Apple has changed policies
+    # so that listening to multicast requires "Local Network Permission".
+    # It is still unclear how to work around that in a GitHub runner.
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
